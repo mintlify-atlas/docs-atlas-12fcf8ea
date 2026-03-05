@@ -1,0 +1,152 @@
+{
+  "projectType": "data-platform",
+  "projectName": "Vector",
+  "projectDescription": "A high-performance observability data pipeline for collecting, transforming, and routing logs, metrics, and traces.",
+  "theme": "aspen",
+  "primaryColor": "#36d6fc",
+  "lightColor": "#a99afc",
+  "darkColor": "#040404",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/data-model",
+              "concepts/pipeline-model",
+              "concepts/sources",
+              "concepts/transforms",
+              "concepts/sinks",
+              "concepts/buffering"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/sources",
+              "configuration/transforms",
+              "configuration/sinks",
+              "configuration/global-options",
+              "configuration/testing"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/roles",
+              "deployment/topologies",
+              "deployment/kubernetes",
+              "deployment/docker",
+              "deployment/systemd"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "administration/monitoring",
+              "administration/validation",
+              "administration/upgrading",
+              "administration/troubleshooting"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/performance-tuning",
+              "guides/vrl-basics",
+              "guides/enrichment",
+              "guides/reliability"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Sources",
+            "pages": [
+              "reference/sources/overview",
+              "reference/sources/file",
+              "reference/sources/kafka",
+              "reference/sources/http",
+              "reference/sources/syslog",
+              "reference/sources/docker-logs"
+            ]
+          },
+          {
+            "group": "Transforms",
+            "pages": [
+              "reference/transforms/overview",
+              "reference/transforms/remap",
+              "reference/transforms/filter",
+              "reference/transforms/aggregate",
+              "reference/transforms/reduce"
+            ]
+          },
+          {
+            "group": "Sinks",
+            "pages": [
+              "reference/sinks/overview",
+              "reference/sinks/elasticsearch",
+              "reference/sinks/s3",
+              "reference/sinks/datadog",
+              "reference/sinks/kafka",
+              "reference/sinks/prometheus"
+            ]
+          },
+          {
+            "group": "VRL",
+            "pages": [
+              "reference/vrl/overview",
+              "reference/vrl/functions",
+              "reference/vrl/expressions",
+              "reference/vrl/examples"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "reference/cli/overview",
+              "reference/cli/commands"
+            ]
+          },
+          {
+            "group": "API",
+            "pages": [
+              "reference/api/overview",
+              "reference/api/graphql"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "High-performance data pipeline built in Rust",
+    "Agent and aggregator deployment modes",
+    "100+ sources, transforms, and sinks",
+    "Vector Remap Language (VRL) for data transformation",
+    "End-to-end delivery guarantees",
+    "Real-time observability data processing"
+  ],
+  "publicApiSurface": [
+    "Sources: file, kafka, syslog, http, docker_logs, journald, prometheus, etc.",
+    "Transforms: remap, filter, aggregate, reduce, log_to_metric, dedupe, etc.",
+    "Sinks: elasticsearch, s3, kafka, datadog, prometheus, clickhouse, etc.",
+    "CLI: vector validate, vector test, vector graph, vector top",
+    "GraphQL API for runtime management and monitoring",
+    "VRL functions for data transformation"
+  ]
+}
