@@ -1,122 +1,153 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Vector",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#36d6fc",
+    "light": "#a99afc",
+    "dark": "#040404"
   },
   "favicon": "/favicon.svg",
+  "logo": {
+    "light": "https://media.brand.dev/db153b45-c301-4d19-a511-c573ac74c425.svg",
+    "dark": "https://media.brand.dev/db153b45-c301-4d19-a511-c573ac74c425.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/vectordotdev/vector"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/vectordotdev/vector"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/data-model",
+              "concepts/pipeline-model",
+              "concepts/sources",
+              "concepts/transforms",
+              "concepts/sinks",
+              "concepts/buffering"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Configuration",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "configuration/overview",
+              "configuration/sources",
+              "configuration/transforms",
+              "configuration/sinks",
+              "configuration/global-options",
+              "configuration/testing"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Deployment",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "deployment/roles",
+              "deployment/topologies",
+              "deployment/kubernetes",
+              "deployment/docker",
+              "deployment/systemd"
+            ]
+          },
+          {
+            "group": "Administration",
+            "pages": [
+              "administration/monitoring",
+              "administration/validation",
+              "administration/upgrading",
+              "administration/troubleshooting"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/performance-tuning",
+              "guides/vrl-basics",
+              "guides/enrichment",
+              "guides/reliability"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Sources",
             "pages": [
-              "api-reference/introduction"
+              "reference/sources/overview",
+              "reference/sources/file",
+              "reference/sources/kafka",
+              "reference/sources/http",
+              "reference/sources/syslog",
+              "reference/sources/docker-logs"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Transforms",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "reference/transforms/overview",
+              "reference/transforms/remap",
+              "reference/transforms/filter",
+              "reference/transforms/aggregate",
+              "reference/transforms/reduce"
+            ]
+          },
+          {
+            "group": "Sinks",
+            "pages": [
+              "reference/sinks/overview",
+              "reference/sinks/elasticsearch",
+              "reference/sinks/s3",
+              "reference/sinks/datadog",
+              "reference/sinks/kafka",
+              "reference/sinks/prometheus"
+            ]
+          },
+          {
+            "group": "VRL",
+            "pages": [
+              "reference/vrl/overview",
+              "reference/vrl/functions",
+              "reference/vrl/expressions",
+              "reference/vrl/examples"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "reference/cli/overview",
+              "reference/cli/commands"
+            ]
+          },
+          {
+            "group": "API",
+            "pages": [
+              "reference/api/overview",
+              "reference/api/graphql"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

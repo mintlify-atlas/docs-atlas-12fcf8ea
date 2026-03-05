@@ -1,0 +1,99 @@
+---
+title: Sources Overview
+description: Comprehensive guide to Vector data sources
+---
+
+Sources are how Vector ingests observability data. They collect data from various systems and generate events that flow through Vector's pipeline.
+
+## Available Sources
+
+Vector provides a wide range of sources for collecting logs, metrics, and traces from different systems:
+
+### File-Based Sources
+
+<Card title="File" icon="file" href="/reference/sources/file">
+  Collect logs from files with support for globbing, rotation, and checkpointing
+</Card>
+
+### Message Queue Sources
+
+<Card title="Kafka" icon="server" href="/reference/sources/kafka">
+  Collect logs from Apache Kafka topics with consumer group support
+</Card>
+
+### HTTP Sources
+
+<Card title="HTTP" icon="globe" href="/reference/sources/http">
+  Host an HTTP endpoint to receive logs via POST requests
+</Card>
+
+### Syslog Sources
+
+<Card title="Syslog" icon="terminal" href="/reference/sources/syslog">
+  Collect logs sent via the Syslog protocol (TCP, UDP, or Unix sockets)
+</Card>
+
+### Container Sources
+
+<Card title="Docker Logs" icon="docker" href="/reference/sources/docker-logs">
+  Collect container logs directly from the Docker daemon
+</Card>
+
+## Common Concepts
+
+### Event Types
+
+Sources produce one or more of the following event types:
+
+- **Logs**: Structured or unstructured log data
+- **Metrics**: Numerical measurements and time-series data
+- **Traces**: Distributed tracing spans
+
+### Acknowledgements
+
+Some sources support end-to-end acknowledgements, ensuring data is not lost in transit. When acknowledgements are enabled, the source only marks data as processed after it has been successfully delivered to all sinks.
+
+### Log Namespacing
+
+Vector supports two log namespacing modes:
+
+- **Legacy**: Fields are added directly to the event root
+- **Vector**: Metadata is separated into a dedicated namespace
+
+Most sources respect the global `log_namespace` setting or allow per-source configuration.
+
+### Decoding and Framing
+
+Many sources support configurable decoding and framing:
+
+- **Framing**: How to split incoming bytes into messages (newline delimited, length delimited, etc.)
+- **Decoding**: How to parse messages into events (JSON, text, protobuf, etc.)
+
+## Configuration Example
+
+```toml
+[sources.my_source]
+type = "file"
+include = ["/var/log/**/*.log"]
+
+[sources.my_kafka]
+type = "kafka"
+bootstrap_servers = "localhost:9092"
+topics = ["logs"]
+group_id = "vector"
+```
+
+## Best Practices
+
+1. **Use checkpointing**: For file-based sources, ensure checkpointing is enabled to avoid duplicate data
+2. **Configure retries**: Set appropriate retry and backoff settings for network-based sources
+3. **Filter early**: Use source-level filtering when possible to reduce pipeline load
+4. **Monitor source health**: Use Vector's internal metrics to track source performance
+5. **Test acknowledgements**: When using acknowledgements, test failure scenarios to ensure data durability
+
+## Performance Considerations
+
+- File sources can handle millions of events per second with proper tuning
+- Network sources benefit from connection pooling and keep-alive settings
+- Consider using multiple sources with load balancing for high-throughput scenarios
+- Buffer sizes and batch settings significantly impact throughput and latency

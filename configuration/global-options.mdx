@@ -1,0 +1,355 @@
+---
+title: Global Options
+description: Configure global settings for your Vector instance
+---
+
+Global options are top-level configuration settings that apply to your entire Vector instance. These settings control fundamental behaviors like data storage, logging, and acknowledgements.
+
+## Configuration
+
+Global options are configured at the top level of your configuration file:
+
+```yaml
+# Global options
+data_dir: "/var/lib/vector"
+
+log_schema:
+  host_key: "host"
+  message_key: "message"
+  timestamp_key: "timestamp"
+
+acknowledgements:
+  enabled: true
+
+# Component configuration
+sources:
+  # ...
+```
+
+## Data Directory
+
+The directory where Vector stores state data, including disk buffers, file checkpoints, and other persistent data.
+
+<ParamField path="data_dir" type="string" default="/var/lib/vector">
+  Path to the directory for persisting Vector state data. Vector must have write permissions to this directory.
+  
+  ```yaml
+  data_dir: "/var/lib/vector"
+  ```
+</ParamField>
+
+### Usage
+
+The data directory is used for:
+
+- **Disk buffers** - When sinks use disk buffering
+- **File checkpoints** - Track file reading positions
+- **State data** - Component-specific state persistence
+
+### Permissions
+
+Vector requires:
+- Read and write access to the data directory
+- Ability to create subdirectories
+- Sufficient disk space for buffers and state
+
+## Log Schema
+
+Defines the default field names for core event data across all components.
+
+<ParamField path="log_schema" type="object">
+  Default log schema for all events. Components can override these settings.
+</ParamField>
+
+<ParamField path="log_schema.host_key" type="string" default="host">
+  Field name for the host that generated the event.
+  
+  ```yaml
+  log_schema:
+    host_key: "hostname"
+  ```
+</ParamField>
+
+<ParamField path="log_schema.message_key" type="string" default="message">
+  Field name for the event message/content.
+  
+  ```yaml
+  log_schema:
+    message_key: "msg"
+  ```
+</ParamField>
+
+<ParamField path="log_schema.timestamp_key" type="string" default="timestamp">
+  Field name for the event timestamp.
+  
+  ```yaml
+  log_schema:
+    timestamp_key: "ts"
+  ```
+</ParamField>
+
+<ParamField path="log_schema.source_type_key" type="string" default="source_type">
+  Field name for the source type identifier.
+  
+  ```yaml
+  log_schema:
+    source_type_key: "source"
+  ```
+</ParamField>
+
+<ParamField path="log_schema.metadata_key" type="string" default="metadata">
+  Field name for event metadata.
+  
+  ```yaml
+  log_schema:
+    metadata_key: "meta"
+  ```
+</ParamField>
+
+### Example
+
+```yaml
+log_schema:
+  host_key: "server"
+  message_key: "log_message"
+  timestamp_key: "event_time"
+  source_type_key: "log_source"
+  metadata_key: "event_metadata"
+
+sources:
+  demo:
+    type: demo_logs
+    format: json
+```
+
+## Acknowledgements
+
+Control how Vector handles end-to-end acknowledgements for event delivery.
+
+<ParamField path="acknowledgements" type="object">
+  Global acknowledgement configuration. Can be overridden per-sink.
+</ParamField>
+
+<ParamField path="acknowledgements.enabled" type="boolean" default="false">
+  Enable acknowledgements globally for all sinks.
+  
+  ```yaml
+  acknowledgements:
+    enabled: true
+  ```
+</ParamField>
+
+When acknowledgements are enabled:
+- Sources wait for sinks to confirm event delivery
+- Prevents data loss during failures
+- Adds latency to event processing
+- Requires sink support for acknowledgements
+
+See the [End-to-end Acknowledgements](https://vector.dev/docs/architecture/end-to-end-acknowledgements/) documentation for details.
+
+## Timezone
+
+Set the default timezone for timestamp operations.
+
+<ParamField path="timezone" type="string" default="local">
+  Default timezone for timestamp conversions. Use any [TZ database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) name or `local` for system time.
+  
+  ```yaml
+  timezone: "America/New_York"
+  ```
+</ParamField>
+
+Common timezone values:
+- `UTC` - Coordinated Universal Time
+- `America/New_York` - US Eastern Time
+- `Europe/London` - UK Time
+- `Asia/Tokyo` - Japan Time
+- `local` - System local time
+
+## Proxy Configuration
+
+Configure HTTP/HTTPS proxy settings for components that make external requests.
+
+<ParamField path="proxy" type="object">
+  Global proxy configuration.
+</ParamField>
+
+<ParamField path="proxy.http" type="string">
+  HTTP proxy URL.
+  
+  ```yaml
+  proxy:
+    http: "http://proxy.example.com:3128"
+  ```
+</ParamField>
+
+<ParamField path="proxy.https" type="string">
+  HTTPS proxy URL.
+  
+  ```yaml
+  proxy:
+    https: "http://proxy.example.com:3128"
+  ```
+</ParamField>
+
+<ParamField path="proxy.no_proxy" type="array">
+  List of domains to exclude from proxying.
+  
+  ```yaml
+  proxy:
+    no_proxy:
+      - localhost
+      - 127.0.0.1
+      - "*.internal.example.com"
+  ```
+</ParamField>
+
+### Example
+
+```yaml
+proxy:
+  http: "http://proxy.example.com:3128"
+  https: "http://proxy.example.com:3128"
+  no_proxy:
+    - localhost
+    - 127.0.0.1
+    - "*.local"
+```
+
+## Metrics Expiration
+
+Control how long internal metrics persist before expiring.
+
+<ParamField path="expire_metrics_secs" type="float" default="300">
+  Seconds before internal metrics expire after not being updated. Set higher than your metrics scrape interval.
+  
+  ```yaml
+  expire_metrics_secs: 600  # 10 minutes
+  ```
+</ParamField>
+
+## Healthchecks
+
+Configure healthcheck behavior for all sinks.
+
+<ParamField path="healthchecks" type="object">
+  Global healthcheck configuration.
+</ParamField>
+
+<ParamField path="healthchecks.enabled" type="boolean" default="true">
+  Enable healthchecks for all sinks.
+  
+  ```yaml
+  healthchecks:
+    enabled: true
+    require_healthy: false
+  ```
+</ParamField>
+
+<ParamField path="healthchecks.require_healthy" type="boolean" default="false">
+  Exit during startup if any sink healthcheck fails.
+  
+  ```yaml
+  healthchecks:
+    require_healthy: true
+  ```
+</ParamField>
+
+## Enrichment Tables
+
+Define enrichment tables for data augmentation.
+
+<ParamField path="enrichment_tables" type="object">
+  Named enrichment tables that can be used by transforms.
+</ParamField>
+
+### Example
+
+```yaml
+enrichment_tables:
+  geoip:
+    type: geoip
+    path: "/etc/vector/GeoLite2-City.mmdb"
+
+transforms:
+  enrich:
+    type: remap
+    inputs: [logs]
+    source: |
+      .geo = get_enrichment_table_record!("geoip", {"ip": .client_ip})
+```
+
+## Complete Example
+
+```yaml
+# Global Options
+data_dir: "/var/lib/vector"
+
+log_schema:
+  host_key: "hostname"
+  message_key: "log"
+  timestamp_key: "ts"
+  source_type_key: "source"
+
+timezone: "America/New_York"
+
+proxy:
+  http: "http://proxy.internal:3128"
+  https: "http://proxy.internal:3128"
+  no_proxy:
+    - localhost
+    - "*.internal"
+
+acknowledgements:
+  enabled: true
+
+healthchecks:
+  enabled: true
+  require_healthy: true
+
+expire_metrics_secs: 600
+
+# Enrichment Tables
+enrichment_tables:
+  user_data:
+    type: file
+    file:
+      path: "/etc/vector/users.csv"
+      encoding:
+        type: csv
+    schema:
+      user_id: string
+      name: string
+      email: string
+
+# Sources
+sources:
+  app_logs:
+    type: file
+    include: ["/var/log/app/*.log"]
+
+# Transforms
+transforms:
+  parse:
+    type: remap
+    inputs: [app_logs]
+    source: |
+      . = parse_json!(.log)
+      .user = get_enrichment_table_record!("user_data", {"user_id": .user_id})
+
+# Sinks
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs: [parse]
+    endpoint: "http://localhost:9200"
+    bulk:
+      index: "logs-%Y-%m-%d"
+```
+
+## Next Steps
+
+- [Sources](/configuration/sources) - Configure data ingestion
+- [Transforms](/configuration/transforms) - Process your data
+- [Sinks](/configuration/sinks) - Send data to destinations
+- [Testing](/configuration/testing) - Test your configuration

@@ -1,0 +1,451 @@
+---
+title: Datadog Sink
+description: Publish logs, metrics, and traces to Datadog's observability platform
+icon: chart-line
+---
+
+The Datadog sink publishes observability data to Datadog's cloud platform. It supports logs, metrics, and traces with automatic batching, compression, and retry logic.
+
+## Configuration
+
+```toml
+[sinks.datadog_logs]
+type = "datadog_logs"
+inputs = ["my_source"]
+
+# API key (required)
+default_api_key = "${DATADOG_API_KEY}"
+
+# Datadog site (optional)
+site = "datadoghq.com"  # US1
+# site = "datadoghq.eu"  # EU
+# site = "us3.datadoghq.com"  # US3
+# site = "us5.datadoghq.com"  # US5
+
+# Compression
+compression = "zstd"
+
+# Batching
+batch.max_events = 1000
+batch.timeout_secs = 5
+```
+
+## Core Parameters
+
+<ParamField path="default_api_key" type="string" required>
+  Your Datadog API key. This is required for authentication.
+  
+  Store this in an environment variable for security.
+
+  ```toml
+  default_api_key = "${DATADOG_API_KEY}"
+  ```
+</ParamField>
+
+<ParamField path="site" type="string" default="datadoghq.com">
+  The Datadog site to send data to. Choose based on your account region:
+  - `datadoghq.com`: US1 (default)
+  - `datadoghq.eu`: EU (Europe)
+  - `us3.datadoghq.com`: US3
+  - `us5.datadoghq.com`: US5
+  - `ap1.datadoghq.com`: AP1 (Asia Pacific)
+  - `ddog-gov.com`: US1-FED (Government)
+
+  ```toml
+  site = "datadoghq.eu"
+  ```
+</ParamField>
+
+<ParamField path="endpoint" type="string">
+  Custom endpoint URL. Overrides the `site` setting.
+  
+  Useful for proxying or testing.
+
+  ```toml
+  endpoint = "https://http-intake.logs.datadoghq.com"
+  ```
+</ParamField>
+
+## Logs Configuration
+
+For sending logs to Datadog:
+
+```toml
+[sinks.datadog_logs]
+type = "datadog_logs"
+inputs = ["logs"]
+
+default_api_key = "${DATADOG_API_KEY}"
+site = "datadoghq.com"
+
+# Compression (highly recommended)
+compression = "zstd"
+
+# Conform to Datadog Agent format
+conforms_as_agent = false
+
+# Batching configuration
+[sinks.datadog_logs.batch]
+max_events = 1000        # Max events per batch
+max_bytes = 4250000      # ~4.25MB (under 5MB API limit)
+timeout_secs = 5.0       # Flush interval
+
+# Encoding
+[sinks.datadog_logs.encoding]
+except_fields = ["_metadata"]
+timestamp_format = "rfc3339"
+```
+
+### Datadog Agent Compatibility
+
+<ParamField path="conforms_as_agent" type="boolean" default="false">
+  When enabled, normalizes events to conform to Datadog Agent standard and sends with the `DD-PROTOCOL: agent-json` header.
+  
+  Enable this if you want Vector to behave like the Datadog Agent.
+
+  ```toml
+  conforms_as_agent = true
+  ```
+</ParamField>
+
+## Compression
+
+<ParamField path="compression" type="string" default="zstd">
+  Compression algorithm for reducing payload size. Options:
+  - `zstd`: Zstandard compression (recommended, default)
+  - `gzip`: Gzip compression
+  - `none`: No compression
+  
+  Datadog recommends using compression to reduce bandwidth and improve throughput.
+
+  ```toml
+  compression = "zstd"
+  ```
+</ParamField>
+
+## Batching
+
+Datadog has specific limits for the Logs API:
+- Maximum payload size: 5MB (uncompressed)
+- Maximum events per batch: 1000
+- Recommended batch goal: ~4.25MB
+
+<ParamField path="batch.max_events" type="integer" default="1000">
+  Maximum number of events per batch. Cannot exceed 1000 for Datadog.
+</ParamField>
+
+<ParamField path="batch.max_bytes" type="integer" default="4250000">
+  Maximum batch size in bytes (uncompressed). Kept under 5MB API limit.
+</ParamField>
+
+<ParamField path="batch.timeout_secs" type="float" default="5.0">
+  Maximum time to wait before flushing a partial batch.
+</ParamField>
+
+```toml
+[sinks.datadog_logs.batch]
+max_events = 500          # Smaller batches for lower latency
+max_bytes = 2000000       # 2MB batches
+timeout_secs = 2.0        # Flush every 2 seconds
+```
+
+## Encoding
+
+<ParamField path="encoding" type="object">
+  Configure how events are encoded before sending to Datadog.
+
+  ```toml
+  [sinks.datadog_logs.encoding]
+  except_fields = ["_metadata", "internal_field"]
+  only_fields = ["message", "timestamp", "level", "service"]
+  timestamp_format = "rfc3339"
+  ```
+</ParamField>
+
+## Request Configuration
+
+<ParamField path="request.timeout_secs" type="integer" default="60">
+  HTTP request timeout in seconds.
+</ParamField>
+
+<ParamField path="request.rate_limit_num" type="integer">
+  Maximum number of requests per time window.
+</ParamField>
+
+<ParamField path="request.retry_attempts" type="integer" default="5">
+  Number of retry attempts for failed requests.
+</ParamField>
+
+<ParamField path="request.headers" type="object">
+  Custom HTTP headers to include in requests.
+
+  ```toml
+  [sinks.datadog_logs.request.headers]
+  X-Custom-Header = "value"
+  ```
+</ParamField>
+
+```toml
+[sinks.datadog_logs.request]
+timeout_secs = 30
+retry_attempts = 3
+
+[sinks.datadog_logs.request.tower]
+concurrency = 10
+rate_limit_num = 100
+```
+
+## TLS Configuration
+
+<ParamField path="tls.enabled" type="boolean" default="true">
+  Enable TLS/SSL connections. Required for Datadog.
+</ParamField>
+
+<ParamField path="tls.ca_file" type="string">
+  Path to CA certificate file.
+
+  ```toml
+  [sinks.datadog_logs.tls]
+  ca_file = "/path/to/ca.pem"
+  ```
+</ParamField>
+
+## Datadog Event Fields
+
+Datadog expects specific fields in log events. Vector automatically maps common fields:
+
+| Vector Field | Datadog Field | Description |
+|--------------|---------------|-------------|
+| `message` | `message` | Log message text |
+| `timestamp` | `timestamp` | Event timestamp |
+| `host` | `host` | Hostname |
+| `service` | `service` | Service name |
+| `source` | `source` | Log source |
+| `severity` | `status` | Log level/severity |
+| `trace_id` | `trace_id` | Distributed trace ID |
+
+Additional fields are sent as custom attributes.
+
+## Complete Examples
+
+### Basic Logs Configuration
+
+```toml
+[sinks.datadog]
+type = "datadog_logs"
+inputs = ["parse_logs"]
+
+default_api_key = "${DATADOG_API_KEY}"
+site = "datadoghq.com"
+
+compression = "zstd"
+
+[sinks.datadog.batch]
+max_events = 1000
+timeout_secs = 5
+```
+
+### EU Region with Custom Encoding
+
+```toml
+[sinks.datadog_eu]
+type = "datadog_logs"
+inputs = ["processed_logs"]
+
+default_api_key = "${DD_API_KEY}"
+site = "datadoghq.eu"
+
+compression = "gzip"
+
+[sinks.datadog_eu.encoding]
+except_fields = ["_metadata", "internal_id"]
+timestamp_format = "unix"
+
+[sinks.datadog_eu.batch]
+max_events = 500
+max_bytes = 2000000
+timeout_secs = 3
+```
+
+### Agent-Compatible Configuration
+
+```toml
+[sinks.datadog_agent]
+type = "datadog_logs"
+inputs = ["logs"]
+
+default_api_key = "${DATADOG_API_KEY}"
+conforms_as_agent = true
+
+compression = "zstd"
+
+[sinks.datadog_agent.request.headers]
+DD-PROTOCOL = "agent-json"
+```
+
+### High-Throughput Configuration
+
+```toml
+[sinks.datadog_high_volume]
+type = "datadog_logs"
+inputs = ["high_volume_source"]
+
+default_api_key = "${DATADOG_API_KEY}"
+site = "datadoghq.com"
+
+compression = "zstd"  # Best compression ratio
+
+[sinks.datadog_high_volume.batch]
+max_events = 1000
+max_bytes = 4250000
+timeout_secs = 2  # Faster flushing
+
+[sinks.datadog_high_volume.request.tower]
+concurrency = 20  # More concurrent requests
+rate_limit_num = 500
+```
+
+### Multi-Region Setup
+
+```toml
+# US logs
+[sinks.datadog_us]
+type = "datadog_logs"
+inputs = ["us_logs"]
+default_api_key = "${DD_US_API_KEY}"
+site = "datadoghq.com"
+compression = "zstd"
+
+# EU logs
+[sinks.datadog_eu]
+type = "datadog_logs"
+inputs = ["eu_logs"]
+default_api_key = "${DD_EU_API_KEY}"
+site = "datadoghq.eu"
+compression = "zstd"
+```
+
+## Metrics Sink
+
+For sending metrics to Datadog:
+
+```toml
+[sinks.datadog_metrics]
+type = "datadog_metrics"
+inputs = ["host_metrics"]
+
+default_api_key = "${DATADOG_API_KEY}"
+site = "datadoghq.com"
+
+[sinks.datadog_metrics.batch]
+max_events = 1000
+timeout_secs = 10
+```
+
+## Traces Sink
+
+For sending traces to Datadog:
+
+```toml
+[sinks.datadog_traces]
+type = "datadog_traces"
+inputs = ["traces"]
+
+default_api_key = "${DATADOG_API_KEY}"
+site = "datadoghq.com"
+```
+
+## Troubleshooting
+
+### Authentication Errors
+
+If you see 403 Forbidden errors:
+
+1. Verify API key is correct
+2. Check API key has necessary permissions
+3. Ensure you're using the correct Datadog site
+4. Verify the key hasn't been revoked
+
+### Payload Too Large
+
+If you see 413 errors:
+
+1. Reduce `batch.max_bytes` below 4.25MB
+2. Reduce `batch.max_events` below 1000
+3. Enable or increase compression
+4. Check for extremely large individual events
+
+### High Latency
+
+To reduce latency:
+
+1. Decrease `batch.timeout_secs` (trade-off: more API calls)
+2. Enable `compression = "zstd"` for faster network transfer
+3. Increase `request.tower.concurrency` for more parallel requests
+4. Choose a Datadog site closer to your infrastructure
+
+### Rate Limiting
+
+If hitting rate limits:
+
+1. Increase `batch.timeout_secs` to send fewer requests
+2. Increase `batch.max_events` to pack more data per request
+3. Reduce `request.tower.rate_limit_num`
+4. Contact Datadog support for higher limits
+
+## Best Practices
+
+1. **Use environment variables** for API keys
+2. **Enable compression** (`zstd` recommended) to reduce costs and improve performance
+3. **Choose the correct site** matching your Datadog account region
+4. **Set appropriate batch sizes** to balance latency and throughput
+5. **Use structured logging** with standard field names
+6. **Add service and source tags** for better organization in Datadog
+7. **Monitor Vector metrics** to track delivery success
+8. **Use `conforms_as_agent = true`** if migrating from Datadog Agent
+9. **Configure retries** for reliability
+10. **Test with small batches** before scaling up
+
+## Field Mapping
+
+To ensure proper field mapping in Datadog:
+
+```toml
+[transforms.add_datadog_fields]
+type = "remap"
+inputs = ["source"]
+source = '''
+  # Set standard Datadog fields
+  .service = "my-service"
+  .source = "vector"
+  .status = .level
+  .host = get_hostname!()
+  
+  # Add tags
+  .tags.environment = "production"
+  .tags.version = "1.0.0"
+'''
+
+[sinks.datadog]
+type = "datadog_logs"
+inputs = ["add_datadog_fields"]
+default_api_key = "${DATADOG_API_KEY}"
+```
+
+## Monitoring
+
+Monitor your Datadog sink with Vector's internal metrics:
+
+- `component_sent_events_total{sink="datadog_logs"}`: Events successfully sent
+- `component_sent_event_bytes_total{sink="datadog_logs"}`: Bytes sent
+- `component_errors_total{sink="datadog_logs"}`: Errors encountered
+- `component_discarded_events_total{sink="datadog_logs"}`: Events dropped
+
+View these in Datadog itself or export to Prometheus.
+
+## See Also
+
+- [Datadog Log Management](https://docs.datadoghq.com/logs/)
+- [Datadog HTTP API](https://docs.datadoghq.com/api/latest/logs/)
+- [Datadog Agent Documentation](https://docs.datadoghq.com/agent/)
+- [Datadog Sites](https://docs.datadoghq.com/getting_started/site/)

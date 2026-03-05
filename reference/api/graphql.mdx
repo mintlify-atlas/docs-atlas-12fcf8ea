@@ -1,0 +1,871 @@
+---
+title: GraphQL Schema Reference
+description: Complete GraphQL API schema documentation for Vector
+---
+
+Vector's GraphQL API provides comprehensive access to runtime metrics, component topology, and system health.
+
+## Schema Overview
+
+The API is organized into three main operation types:
+
+- **Query** - Read current state and metrics
+- **Mutation** - Modify configuration (not currently supported)
+- **Subscription** - Real-time streaming data
+
+## Root Query Type
+
+### `health`
+
+Returns `true` to indicate the GraphQL server is reachable.
+
+**Type:** `Boolean!`
+
+**Example:**
+```graphql
+query {
+  health
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "health": true
+  }
+}
+```
+
+---
+
+### `components`
+
+Returns all configured components (sources, transforms, and sinks).
+
+**Type:** `ComponentsConnection!`
+
+**Arguments:**
+- `first: Int` - Number of items to return from the start
+- `last: Int` - Number of items to return from the end
+- `after: String` - Cursor to start from
+- `before: String` - Cursor to end at
+- `filter: ComponentsFilter` - Filter components by criteria
+- `sortBy: ComponentsSort` - Sort order
+
+**Example:**
+```graphql
+query {
+  components(first: 10) {
+    nodes {
+      componentId
+      componentType
+      ... on Source {
+        outputType
+      }
+      ... on Transform {
+        inputs
+      }
+      ... on Sink {
+        inputs
+      }
+    }
+  }
+}
+```
+
+---
+
+### `hostMetrics`
+
+<Note>
+Requires the `sources-host_metrics` feature to be enabled at compile time.
+</Note>
+
+Returns host system metrics including CPU, memory, disk, and network statistics.
+
+**Type:** `HostMetrics!`
+
+**Example:**
+```graphql
+query {
+  hostMetrics {
+    cpu {
+      cpuSecondsTotal
+    }
+    memory {
+      memoryTotalBytes
+      memoryUsedBytes
+      memoryAvailableBytes
+    }
+    disk {
+      diskUsedBytes
+      diskTotalBytes
+    }
+    network {
+      networkReceiveBytesTotal
+      networkTransmitBytesTotal
+    }
+  }
+}
+```
+
+---
+
+## Component Types
+
+### `Component` Interface
+
+All components implement this interface.
+
+**Fields:**
+- `componentId: String!` - Unique component identifier
+- `componentType: String!` - Component type (e.g., "demo_logs", "remap", "elasticsearch")
+
+**Implementations:**
+- `Source`
+- `Transform`
+- `Sink`
+
+---
+
+### `Source` Type
+
+Represents a data source component.
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `componentType: String!` - Source type
+- `outputType: String!` - Output data type ("log", "metric", or "trace")
+- `outputs: [Output!]!` - Output connections to other components
+
+**Example:**
+```graphql
+query {
+  components(filter: { componentKind: [{ equals: SOURCE }] }) {
+    nodes {
+      ... on Source {
+        componentId
+        componentType
+        outputType
+      }
+    }
+  }
+}
+```
+
+---
+
+### `Transform` Type
+
+Represents a data transformation component.
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `componentType: String!` - Transform type
+- `inputs: [String!]!` - Input component IDs
+- `outputs: [Output!]!` - Output connections
+
+**Example:**
+```graphql
+query {
+  components(filter: { componentKind: [{ equals: TRANSFORM }] }) {
+    nodes {
+      ... on Transform {
+        componentId
+        componentType
+        inputs
+      }
+    }
+  }
+}
+```
+
+---
+
+### `Sink` Type
+
+Represents a data sink component.
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `componentType: String!` - Sink type
+- `inputs: [String!]!` - Input component IDs
+
+**Example:**
+```graphql
+query {
+  components(filter: { componentKind: [{ equals: SINK }] }) {
+    nodes {
+      ... on Sink {
+        componentId
+        componentType
+        inputs
+      }
+    }
+  }
+}
+```
+
+---
+
+## Filter Types
+
+### `ComponentsFilter`
+
+Filter components by various criteria.
+
+**Fields:**
+- `componentId: [StringFilter!]` - Filter by component ID
+- `componentKind: [EqualityFilter<ComponentKind>!]` - Filter by component kind
+- `or: [ComponentsFilter!]` - Combine filters with OR logic
+
+**Example:**
+```graphql
+query {
+  components(
+    filter: {
+      componentId: [{ equals: "demo_logs" }]
+    }
+  ) {
+    nodes {
+      componentId
+      componentType
+    }
+  }
+}
+```
+
+---
+
+### `StringFilter`
+
+Filter string fields.
+
+**Fields:**
+- `equals: String` - Exact match
+- `notEquals: String` - Does not match
+- `contains: String` - Contains substring
+- `notContains: String` - Does not contain substring
+- `startsWith: String` - Starts with prefix
+- `endsWith: String` - Ends with suffix
+
+**Example:**
+```graphql
+query {
+  components(
+    filter: {
+      componentId: [{ startsWith: "demo" }]
+    }
+  ) {
+    nodes {
+      componentId
+    }
+  }
+}
+```
+
+---
+
+### `ComponentKind` Enum
+
+Component type categories.
+
+**Values:**
+- `SOURCE` - Data source
+- `TRANSFORM` - Data transformation
+- `SINK` - Data destination
+
+---
+
+## Sort Types
+
+### `ComponentsSort`
+
+Sort components by field and direction.
+
+**Fields:**
+- `field: ComponentsSortFieldName!` - Field to sort by
+- `direction: SortDirection!` - Sort direction
+
+**Example:**
+```graphql
+query {
+  components(
+    sortBy: {
+      field: COMPONENT_KEY
+      direction: ASC
+    }
+  ) {
+    nodes {
+      componentId
+    }
+  }
+}
+```
+
+---
+
+### `ComponentsSortFieldName` Enum
+
+Fields available for sorting.
+
+**Values:**
+- `COMPONENT_KEY` - Sort by component ID
+- `COMPONENT_KIND` - Sort by component type
+
+---
+
+### `SortDirection` Enum
+
+Sort direction.
+
+**Values:**
+- `ASC` - Ascending order
+- `DESC` - Descending order
+
+---
+
+## Pagination
+
+### `ComponentsConnection`
+
+Relay-style connection type for pagination.
+
+**Fields:**
+- `pageInfo: PageInfo!` - Pagination information
+- `edges: [ComponentEdge!]!` - List of edges
+- `nodes: [Component!]!` - Direct access to nodes
+
+---
+
+### `PageInfo`
+
+Pagination metadata.
+
+**Fields:**
+- `hasNextPage: Boolean!` - More items available
+- `hasPreviousPage: Boolean!` - Previous items available
+- `startCursor: String` - Cursor of first item
+- `endCursor: String` - Cursor of last item
+
+---
+
+### `ComponentEdge`
+
+Edge in the connection.
+
+**Fields:**
+- `cursor: String!` - Cursor for this edge
+- `node: Component!` - The component
+
+---
+
+## Subscription Type
+
+Subscriptions provide real-time streaming updates.
+
+### `heartbeat`
+
+Periodic timestamp updates.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `Heartbeat!`
+
+**Example:**
+```graphql
+subscription {
+  heartbeat(interval: 1000) {
+    utc
+  }
+}
+```
+
+---
+
+### `uptime`
+
+Vector uptime in seconds.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `Uptime!`
+
+**Example:**
+```graphql
+subscription {
+  uptime(interval: 1000) {
+    seconds
+  }
+}
+```
+
+---
+
+### `componentReceivedEventsTotals`
+
+Total events received by each component.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `[ComponentReceivedEventsTotal!]!`
+
+**Example:**
+```graphql
+subscription {
+  componentReceivedEventsTotals(interval: 1000) {
+    componentId
+    metric {
+      receivedEventsTotal
+    }
+  }
+}
+```
+
+---
+
+### `componentReceivedEventsThroughputs`
+
+Events received per second by each component.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `[ComponentReceivedEventsThroughput!]!`
+
+**Example:**
+```graphql
+subscription {
+  componentReceivedEventsThroughputs(interval: 1000) {
+    componentId
+    throughput
+  }
+}
+```
+
+---
+
+### `componentSentEventsTotals`
+
+Total events sent by each component.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `[ComponentSentEventsTotal!]!`
+
+**Example:**
+```graphql
+subscription {
+  componentSentEventsTotals(interval: 1000) {
+    componentId
+    metric {
+      sentEventsTotal
+    }
+  }
+}
+```
+
+---
+
+### `componentSentEventsThroughputs`
+
+Events sent per second by each component.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `[ComponentSentEventsThroughput!]!`
+
+**Example:**
+```graphql
+subscription {
+  componentSentEventsThroughputs(interval: 1000) {
+    componentId
+    throughput
+  }
+}
+```
+
+---
+
+### `componentReceivedBytesTotals`
+
+Total bytes received by each component.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `[ComponentReceivedBytesTotal!]!`
+
+**Example:**
+```graphql
+subscription {
+  componentReceivedBytesTotals(interval: 1000) {
+    componentId
+    metric {
+      receivedBytesTotal
+    }
+  }
+}
+```
+
+---
+
+### `componentSentBytesTotals`
+
+Total bytes sent by each component.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `[ComponentSentBytesTotal!]!`
+
+**Example:**
+```graphql
+subscription {
+  componentSentBytesTotals(interval: 1000) {
+    componentId
+    metric {
+      sentBytesTotal
+    }
+  }
+}
+```
+
+---
+
+### `componentErrorsTotals`
+
+Total errors by component.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `[ComponentErrorsTotal!]!`
+
+**Example:**
+```graphql
+subscription {
+  componentErrorsTotals(interval: 1000) {
+    componentId
+    metric {
+      errorsTotal
+    }
+  }
+}
+```
+
+---
+
+### `componentAllocatedBytes`
+
+Memory allocated by each component.
+
+**Arguments:**
+- `interval: Int = 1000` - Milliseconds between updates (10-60000)
+
+**Returns:** `[ComponentAllocatedBytes!]!`
+
+**Example:**
+```graphql
+subscription {
+  componentAllocatedBytes(interval: 1000) {
+    componentId
+    metric {
+      allocatedBytes
+    }
+  }
+}
+```
+
+---
+
+## Metric Types
+
+### `Heartbeat`
+
+**Fields:**
+- `utc: DateTime!` - UTC timestamp
+
+---
+
+### `Uptime`
+
+**Fields:**
+- `seconds: Float!` - Vector uptime in seconds
+- `timestamp: DateTime` - Metric timestamp
+
+---
+
+### `ComponentReceivedEventsTotal`
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `metric: ReceivedEventsTotal!` - Metric data
+
+---
+
+### `ReceivedEventsTotal`
+
+**Fields:**
+- `receivedEventsTotal: Float!` - Total events received
+- `timestamp: DateTime` - Metric timestamp
+
+---
+
+### `ComponentReceivedEventsThroughput`
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `throughput: Int!` - Events per second
+
+---
+
+### `ComponentSentEventsTotal`
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `metric: SentEventsTotal!` - Metric data
+
+---
+
+### `SentEventsTotal`
+
+**Fields:**
+- `sentEventsTotal: Float!` - Total events sent
+- `timestamp: DateTime` - Metric timestamp
+
+---
+
+### `ComponentSentEventsThroughput`
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `throughput: Int!` - Events per second
+
+---
+
+### `ComponentReceivedBytesTotal`
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `metric: ReceivedBytesTotal!` - Metric data
+
+---
+
+### `ReceivedBytesTotal`
+
+**Fields:**
+- `receivedBytesTotal: Float!` - Total bytes received
+- `timestamp: DateTime` - Metric timestamp
+
+---
+
+### `ComponentSentBytesTotal`
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `metric: SentBytesTotal!` - Metric data
+
+---
+
+### `SentBytesTotal`
+
+**Fields:**
+- `sentBytesTotal: Float!` - Total bytes sent
+- `timestamp: DateTime` - Metric timestamp
+
+---
+
+### `ComponentErrorsTotal`
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `metric: ErrorsTotal!` - Metric data
+
+---
+
+### `ErrorsTotal`
+
+**Fields:**
+- `errorsTotal: Float!` - Total errors
+- `timestamp: DateTime` - Metric timestamp
+
+---
+
+### `ComponentAllocatedBytes`
+
+**Fields:**
+- `componentId: String!` - Component identifier
+- `metric: AllocatedBytes!` - Metric data
+
+---
+
+### `AllocatedBytes`
+
+**Fields:**
+- `allocatedBytes: Float!` - Bytes allocated
+- `timestamp: DateTime` - Metric timestamp
+
+---
+
+## Host Metrics Types
+
+### `HostMetrics`
+
+**Fields:**
+- `cpu: HostCpuMetrics!` - CPU metrics
+- `memory: HostMemoryMetrics!` - Memory metrics
+- `disk: HostDiskMetrics!` - Disk metrics
+- `network: HostNetworkMetrics!` - Network metrics
+
+---
+
+### `HostCpuMetrics`
+
+**Fields:**
+- `cpuSecondsTotal: Float!` - Total CPU seconds
+
+---
+
+### `HostMemoryMetrics`
+
+**Fields:**
+- `memoryTotalBytes: Float!` - Total memory
+- `memoryUsedBytes: Float!` - Used memory
+- `memoryAvailableBytes: Float!` - Available memory
+
+---
+
+### `HostDiskMetrics`
+
+**Fields:**
+- `diskTotalBytes: Float!` - Total disk space
+- `diskUsedBytes: Float!` - Used disk space
+
+---
+
+### `HostNetworkMetrics`
+
+**Fields:**
+- `networkReceiveBytesTotal: Float!` - Total bytes received
+- `networkTransmitBytesTotal: Float!` - Total bytes transmitted
+
+---
+
+## Complete Example
+
+Here's a comprehensive query that demonstrates multiple features:
+
+```graphql
+query VectorTopology {
+  # Check API health
+  health
+  
+  # Get all components with relationships
+  components(
+    first: 50,
+    sortBy: { field: COMPONENT_KIND, direction: ASC }
+  ) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      componentId
+      componentType
+      
+      ... on Source {
+        outputType
+        outputs {
+          outputId
+        }
+      }
+      
+      ... on Transform {
+        inputs
+        outputs {
+          outputId
+        }
+      }
+      
+      ... on Sink {
+        inputs
+      }
+    }
+  }
+}
+```
+
+```graphql
+subscription VectorMetrics {
+  # Monitor uptime
+  uptime(interval: 5000) {
+    seconds
+  }
+  
+  # Monitor component throughput
+  componentSentEventsThroughputs(interval: 1000) {
+    componentId
+    throughput
+  }
+  
+  # Monitor errors
+  componentErrorsTotals(interval: 5000) {
+    componentId
+    metric {
+      errorsTotal
+    }
+  }
+}
+```
+
+## Schema Introspection
+
+You can introspect the full schema using:
+
+```graphql
+query IntrospectionQuery {
+  __schema {
+    queryType {
+      name
+      fields {
+        name
+        type {
+          name
+          kind
+        }
+      }
+    }
+    subscriptionType {
+      name
+      fields {
+        name
+        type {
+          name
+          kind
+        }
+      }
+    }
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Overview" icon="book" href="/reference/api/overview">
+    Learn how to enable and configure the API
+  </Card>
+  <Card title="CLI Top Command" icon="terminal" href="/reference/cli/commands#top">
+    Use the built-in monitoring dashboard
+  </Card>
+  <Card title="Monitoring Guide" icon="chart-line" href="/administration/monitoring">
+    Set up comprehensive monitoring
+  </Card>
+</CardGroup>

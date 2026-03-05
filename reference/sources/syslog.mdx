@@ -1,0 +1,349 @@
+---
+title: Syslog Source
+description: Collect logs sent via the Syslog protocol (TCP, UDP, or Unix sockets)
+---
+
+The `syslog` source receives syslog-formatted log data over TCP, UDP, or Unix domain sockets. It supports both RFC 3164 (BSD syslog) and RFC 5424 formats.
+
+## Configuration
+
+```toml
+[sources.syslog_tcp]
+type = "syslog"
+mode = "tcp"
+address = "0.0.0.0:514"
+```
+
+## Parameters
+
+<ParamField path="mode" type="string" required>
+  Transport mode for receiving syslog messages.
+  
+  Options: `tcp`, `udp`, `unix`
+  
+  ```toml
+  mode = "tcp"
+  ```
+</ParamField>
+
+<ParamField path="address" type="string" required="For TCP and UDP modes">
+  Socket address to listen on.
+  
+  ```toml
+  address = "0.0.0.0:514"
+  # or
+  address = "127.0.0.1:6514"
+  ```
+</ParamField>
+
+<ParamField path="path" type="string" required="For Unix mode">
+  Unix socket path (Unix mode only).
+  
+  ```toml
+  mode = "unix"
+  path = "/var/run/syslog.sock"
+  ```
+</ParamField>
+
+<ParamField path="max_length" type="integer" default="102400">
+  Maximum buffer size of incoming messages in bytes.
+  
+  ```toml
+  max_length = 204800
+  ```
+</ParamField>
+
+<ParamField path="host_key" type="string">
+  Field name for the peer host. Defaults to global `log_schema.host_key`.
+  
+  For TCP/UDP: the peer's IP address and port (e.g., `1.2.3.4:9000`)
+  For Unix: the socket path
+  
+  ```toml
+  host_key = "source_host"
+  ```
+</ParamField>
+
+<ParamField path="keepalive" type="object">
+  TCP keepalive configuration (TCP mode only).
+  
+  ```toml
+  [sources.syslog.keepalive]
+  time_secs = 7200
+  ```
+</ParamField>
+
+<ParamField path="tls" type="object">
+  TLS configuration for secure syslog (TCP mode only).
+  
+  ```toml
+  [sources.syslog.tls]
+  enabled = true
+  crt_file = "/path/to/cert.pem"
+  key_file = "/path/to/key.pem"
+  ```
+</ParamField>
+
+<ParamField path="receive_buffer_bytes" type="integer">
+  Size of the socket receive buffer in bytes.
+  
+  ```toml
+  receive_buffer_bytes = 65536
+  ```
+</ParamField>
+
+<ParamField path="connection_limit" type="integer">
+  Maximum number of concurrent TCP connections (TCP mode only).
+  
+  ```toml
+  connection_limit = 1000
+  ```
+</ParamField>
+
+<ParamField path="permit_origin" type="object">
+  IP allowlist configuration (TCP mode only).
+  
+  ```toml
+  [sources.syslog.permit_origin]
+  allowed = ["10.0.0.0/8", "192.168.1.0/24"]
+  ```
+</ParamField>
+
+<ParamField path="socket_file_mode" type="integer">
+  Unix file permissions for the socket file in octal (Unix mode only).
+  
+  ```toml
+  socket_file_mode = 0o777
+  ```
+</ParamField>
+
+## Output Schema
+
+The syslog source produces log events with fields parsed from the syslog message:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | The syslog message content |
+| `timestamp` | timestamp | Parsed syslog timestamp |
+| `hostname` | string | Hostname from syslog message |
+| `severity` | string | Syslog severity level |
+| `facility` | string | Syslog facility |
+| `version` | integer | Syslog version (RFC 5424 only) |
+| `appname` | string | Application name |
+| `procid` | integer/string | Process ID |
+| `msgid` | string | Message ID (RFC 5424 only) |
+| `source_ip` | string | IP address of the sender |
+| `source_type` | string | Always "syslog" |
+| Structured data | object | RFC 5424 structured data elements |
+
+## Examples
+
+### TCP Syslog
+
+```toml
+[sources.syslog_tcp]
+type = "syslog"
+mode = "tcp"
+address = "0.0.0.0:514"
+```
+
+### UDP Syslog
+
+```toml
+[sources.syslog_udp]
+type = "syslog"
+mode = "udp"
+address = "0.0.0.0:514"
+max_length = 65536
+```
+
+### Unix Domain Socket
+
+```toml
+[sources.syslog_unix]
+type = "syslog"
+mode = "unix"
+path = "/var/run/vector-syslog.sock"
+socket_file_mode = 0o666
+```
+
+### TLS-Encrypted Syslog
+
+```toml
+[sources.syslog_tls]
+type = "syslog"
+mode = "tcp"
+address = "0.0.0.0:6514"
+
+[sources.syslog_tls.tls]
+enabled = true
+crt_file = "/etc/vector/tls/server.crt"
+key_file = "/etc/vector/tls/server.key"
+ca_file = "/etc/vector/tls/ca.crt"
+```
+
+### High-Performance Configuration
+
+```toml
+[sources.syslog_hp]
+type = "syslog"
+mode = "tcp"
+address = "0.0.0.0:514"
+max_length = 262144
+receive_buffer_bytes = 1048576
+connection_limit = 10000
+
+[sources.syslog_hp.keepalive]
+time_secs = 300
+```
+
+### IP Allowlist
+
+```toml
+[sources.syslog_restricted]
+type = "syslog"
+mode = "tcp"
+address = "0.0.0.0:514"
+
+[sources.syslog_restricted.permit_origin]
+allowed = [
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16"
+]
+```
+
+## How It Works
+
+### Message Parsing
+
+The source automatically detects and parses both syslog formats:
+
+**RFC 3164 (BSD syslog):**
+```
+<34>Oct 11 22:14:15 mymachine su: 'su root' failed for user on /dev/pts/8
+```
+
+**RFC 5424:**
+```
+<165>1 2003-10-11T22:14:15.003Z mymachine.example.com evntslog - ID47 [exampleSDID@32473 iut="3" eventSource="Application" eventID="1011"] An application event log entry...
+```
+
+### Structured Data
+
+RFC 5424 structured data is parsed into nested objects:
+
+```toml
+# Input message:
+<34>1 2003-10-11T22:14:15.003Z host app - - [meta sequenceId="1"][origin ip="10.0.0.1"] Message
+
+# Parsed fields:
+meta.sequenceId = "1"
+origin.ip = "10.0.0.1"
+```
+
+### Severity and Facility
+
+The priority value `<PRI>` is decoded into human-readable severity and facility:
+
+**Severity levels:**
+- 0: emergency
+- 1: alert
+- 2: critical
+- 3: error
+- 4: warning
+- 5: notice
+- 6: informational
+- 7: debug
+
+**Facility codes:**
+- 0: kernel
+- 1: user
+- 2: mail
+- 3: daemon
+- 4: auth
+- 16-23: local0-local7
+- (and more)
+
+### Transport Modes
+
+**TCP:**
+- Reliable, ordered delivery
+- Connection-oriented
+- Supports TLS encryption
+- Suitable for most production use cases
+
+**UDP:**
+- Fire-and-forget, no delivery guarantees
+- Lower overhead
+- Better for high-volume, loss-tolerant scenarios
+
+**Unix:**
+- Local communication only
+- Lowest overhead
+- Perfect for same-host log collection
+
+## Performance
+
+- TCP mode can handle millions of messages per second
+- UDP mode has lower latency but no delivery guarantees
+- Unix sockets have the lowest overhead for local communication
+- Connection pooling and keep-alive improve TCP performance
+- Tune `receive_buffer_bytes` for high-throughput scenarios
+
+## Best Practices
+
+1. Use TCP mode for reliable log delivery
+2. Enable TLS for syslog over untrusted networks
+3. Set appropriate `max_length` based on expected message sizes
+4. Configure `connection_limit` to prevent resource exhaustion
+5. Use Unix sockets for local log forwarding
+6. Monitor connection counts and dropped messages
+7. Configure firewall rules for port 514 (or custom port)
+8. Use structured logging (RFC 5424) when possible
+9. Set up log rotation for high-volume scenarios
+10. Test with actual syslog clients (rsyslog, syslog-ng, etc.)
+
+## Sending Syslog Messages
+
+### Using logger (Linux)
+
+```bash
+# TCP
+logger -n localhost -P 514 -T "Test message"
+
+# UDP
+logger -n localhost -P 514 -d "Test message"
+
+# With facility and severity
+logger -n localhost -P 514 -p local0.info "Application log"
+```
+
+### Using rsyslog
+
+```
+# /etc/rsyslog.d/vector.conf
+*.* @@localhost:514  # TCP
+*.* @localhost:514   # UDP
+```
+
+### Using Python
+
+```python
+import socket
+import time
+
+def send_syslog(host, port, message):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((host, port))
+    
+    # RFC 5424 format
+    priority = 134  # local0.info
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    msg = f"<{priority}>1 {timestamp} myhost myapp - - - {message}\n"
+    
+    sock.send(msg.encode())
+    sock.close()
+
+send_syslog("localhost", 514, "Hello from Python")
+```

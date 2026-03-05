@@ -1,0 +1,341 @@
+---
+title: Transforms
+description: Configure data processing transforms in Vector
+---
+
+Transforms are the processing components in Vector. They modify, filter, aggregate, or enrich events as they flow through your pipeline.
+
+## Transform Configuration
+
+Transforms are configured in the `transforms` section:
+
+```yaml
+transforms:
+  <transform_id>:
+    type: <transform_type>
+    inputs: [<source_or_transform_ids>]
+    # Transform-specific options
+```
+
+### Common Transform Parameters
+
+All transforms support these base configuration options:
+
+<ParamField path="type" type="string" required>
+  The type of the transform component.
+</ParamField>
+
+<ParamField path="inputs" type="array" required>
+  Array of source or transform IDs to receive events from.
+</ParamField>
+
+## Remap Transform
+
+The most powerful transform - uses Vector Remap Language (VRL) to process events:
+
+```yaml
+transforms:
+  parse_logs:
+    type: remap
+    inputs: [apache_logs]
+    source: |
+      . = parse_apache_log!(.message)
+      .status_code = to_int!(.status)
+      .timestamp = parse_timestamp!(.timestamp, "%d/%b/%Y:%H:%M:%S %z")
+```
+
+<ParamField path="source" type="string" required>
+  The VRL program to execute for each event. The `.` refers to the event being processed.
+</ParamField>
+
+<ParamField path="file" type="string">
+  Path to a file containing the VRL program. Alternative to inline `source`.
+</ParamField>
+
+<ParamField path="drop_on_error" type="boolean" default="false">
+  Drop events that cause runtime errors instead of passing them through.
+</ParamField>
+
+<ParamField path="drop_on_abort" type="boolean" default="false">
+  Drop events when the VRL program calls `abort`.
+</ParamField>
+
+### VRL Examples
+
+**Parse JSON logs:**
+```yaml
+source: |
+  . = parse_json!(.message)
+  .level = upcase!(.level)
+```
+
+**Add fields:**
+```yaml
+source: |
+  .environment = "production"
+  .processed_at = now()
+```
+
+**Filter sensitive data:**
+```yaml
+source: |
+  .message = redact(.message, filters: [r'\\d{3}-\\d{2}-\\d{4}'])
+```
+
+## Filter Transform
+
+Filter events based on conditions:
+
+```yaml
+transforms:
+  filter_errors:
+    type: filter
+    inputs: [parse_logs]
+    condition:
+      type: vrl
+      source: '.level == "error"'
+```
+
+<ParamField path="condition" type="object" required>
+  Condition to evaluate. Events that match pass through.
+</ParamField>
+
+<ParamField path="condition.type" type="string" required>
+  Type of condition: `vrl`, `is_log`, `is_metric`, or `is_trace`.
+</ParamField>
+
+<ParamField path="condition.source" type="string">
+  VRL expression that returns a boolean. Required when type is `vrl`.
+</ParamField>
+
+## Sample Transform
+
+Sample a percentage of events:
+
+```yaml
+transforms:
+  sample_half:
+    type: sample
+    inputs: [parse_logs]
+    rate: 2  # Keep 1 out of every 2 events (50%)
+```
+
+<ParamField path="rate" type="integer" required>
+  Keep 1 out of every N events. Rate of 2 = 50%, rate of 10 = 10%.
+</ParamField>
+
+<ParamField path="key_field" type="string">
+  Field to use for deterministic sampling. Events with the same key value will always be sampled together.
+</ParamField>
+
+## Dedupe Transform
+
+Remove duplicate events:
+
+```yaml
+transforms:
+  remove_duplicates:
+    type: dedupe
+    inputs: [parse_logs]
+    fields:
+      match: ["message", "timestamp"]
+    cache:
+      num_events: 5000
+```
+
+<ParamField path="fields" type="object" required>
+  Configuration for matching duplicate events.
+</ParamField>
+
+<ParamField path="fields.match" type="array" required>
+  Array of field names to use for identifying duplicates.
+</ParamField>
+
+<ParamField path="cache.num_events" type="integer" default="5000">
+  Number of recent events to cache for comparison.
+</ParamField>
+
+## Reduce Transform
+
+Aggregate multiple events into a single event:
+
+```yaml
+transforms:
+  aggregate_by_host:
+    type: reduce
+    inputs: [parse_logs]
+    group_by:
+      - host
+      - level
+    merge_strategies:
+      count: sum
+    expire_after_ms: 60000  # 1 minute
+```
+
+<ParamField path="group_by" type="array" required>
+  Array of field names to group events by.
+</ParamField>
+
+<ParamField path="merge_strategies" type="object" required>
+  How to merge field values: `discard`, `retain`, `sum`, `max`, `min`, `array`, or `concat`.
+</ParamField>
+
+<ParamField path="expire_after_ms" type="integer" required>
+  Milliseconds to wait before flushing a group of events.
+</ParamField>
+
+## Throttle Transform
+
+Limit the rate of events:
+
+```yaml
+transforms:
+  rate_limit:
+    type: throttle
+    inputs: [parse_logs]
+    threshold: 100
+    window_secs: 1
+```
+
+<ParamField path="threshold" type="integer" required>
+  Maximum number of events to allow per window.
+</ParamField>
+
+<ParamField path="window_secs" type="integer" required>
+  Time window in seconds.
+</ParamField>
+
+## Route Transform
+
+Route events to different downstream components based on conditions:
+
+```yaml
+transforms:
+  route_by_level:
+    type: route
+    inputs: [parse_logs]
+    route:
+      error: '.level == "error"'
+      warn: '.level == "warn"'
+      info: '.level == "info"'
+
+sinks:
+  critical_alerts:
+    type: console
+    inputs: [route_by_level.error]
+  
+  general_logs:
+    type: elasticsearch
+    inputs: [route_by_level.warn, route_by_level.info]
+```
+
+<ParamField path="route" type="object" required>
+  Map of route names to VRL conditions. Each route creates an output that can be referenced as `<transform_id>.<route_name>`.
+</ParamField>
+
+## Lua Transform
+
+Custom event processing using Lua:
+
+```yaml
+transforms:
+  custom_processing:
+    type: lua
+    inputs: [parse_logs]
+    version: "2"
+    source: |
+      function process(event, emit)
+        event.log.custom_field = "value"
+        emit(event)
+      end
+```
+
+<ParamField path="version" type="string" required>
+  Lua transform version: "1" or "2" (recommended).
+</ParamField>
+
+<ParamField path="source" type="string" required>
+  Lua code to execute. Must define a `process` function.
+</ParamField>
+
+## Pipeline Example
+
+Chain multiple transforms together:
+
+```yaml
+sources:
+  app_logs:
+    type: file
+    include: ["/var/log/app/*.log"]
+
+transforms:
+  # 1. Parse JSON logs
+  parse:
+    type: remap
+    inputs: [app_logs]
+    source: |
+      . = parse_json!(.message)
+  
+  # 2. Add metadata
+  enrich:
+    type: remap
+    inputs: [parse]
+    source: |
+      .environment = "production"
+      .processed_at = now()
+  
+  # 3. Filter only errors
+  filter_errors:
+    type: filter
+    inputs: [enrich]
+    condition:
+      type: vrl
+      source: '.level == "error"'
+  
+  # 4. Sample 10% for analysis
+  sample:
+    type: sample
+    inputs: [filter_errors]
+    rate: 10
+  
+  # 5. Remove duplicates
+  dedupe:
+    type: dedupe
+    inputs: [sample]
+    fields:
+      match: ["message", "timestamp"]
+
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs: [dedupe]
+    endpoint: "http://localhost:9200"
+```
+
+## Transform Outputs
+
+Some transforms create multiple outputs:
+
+```yaml
+transforms:
+  route_logs:
+    type: route
+    inputs: [source]
+    route:
+      errors: '.level == "error"'
+      other: 'true'
+
+sinks:
+  # Reference specific route outputs
+  error_sink:
+    inputs: [route_logs.errors]
+  
+  regular_sink:
+    inputs: [route_logs.other]
+```
+
+## Next Steps
+
+- [Sinks](/configuration/sinks) - Send transformed data to destinations
+- [VRL Documentation](https://vrl.dev) - Learn Vector Remap Language
+- [Testing](/configuration/testing) - Test your transform configurations

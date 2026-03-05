@@ -1,0 +1,725 @@
+---
+title: Troubleshooting
+description: Debug and resolve common Vector issues with diagnostic techniques and solutions
+---
+
+This guide helps you diagnose and resolve common issues with Vector deployments.
+
+## Diagnostic Tools
+
+### Check Vector Status
+
+Verify Vector is running:
+
+```bash
+# Systemd
+sudo systemctl status vector
+
+# Docker
+docker ps | grep vector
+
+# Kubernetes
+kubectl get pods -n vector
+```
+
+### View Logs
+
+Access Vector's logs to identify issues:
+
+```bash
+# Systemd
+sudo journalctl -u vector -f
+
+# Docker
+docker logs -f vector
+
+# Kubernetes
+kubectl logs -f daemonset/vector -n vector
+```
+
+### Validate Configuration
+
+Always start by validating your configuration:
+
+```bash
+vector validate --config /etc/vector/vector.yaml
+```
+
+### Test Configuration
+
+Test Vector in a development environment:
+
+```bash
+# Run Vector in foreground with verbose logging
+vector --config vector.yaml --verbose
+```
+
+## Logging and Debug Levels
+
+Vector supports multiple log levels for troubleshooting.
+
+### Log Levels
+
+From least to most verbose:
+
+| Level | Purpose | Use When |
+|-------|---------|----------|
+| `error` | Critical errors only | Production (minimal logging) |
+| `warn` | Warnings and errors | Production (default) |
+| `info` | General information | Production (standard) |
+| `debug` | Detailed debugging | Troubleshooting |
+| `trace` | Very detailed debugging | Deep troubleshooting |
+
+### Setting Log Levels
+
+#### Via Command Line
+
+```bash
+# Info level (default)
+vector --config vector.yaml
+
+# Debug level
+vector --config vector.yaml --verbose
+
+# Trace level (very detailed)
+vector --config vector.yaml --verbose --verbose
+
+# Warning level only
+vector --config vector.yaml --quiet
+
+# Error level only
+vector --config vector.yaml --quiet --quiet
+
+# Disable all logs
+vector --config vector.yaml --quiet --quiet --quiet
+```
+
+#### Via Environment Variable
+
+```bash
+# Set log level
+export VECTOR_LOG=debug
+vector --config vector.yaml
+
+# Trace level
+export VECTOR_LOG=trace
+vector --config vector.yaml
+
+# Component-specific logging
+export VECTOR_LOG="warn,vector::sources::file=debug"
+vector --config vector.yaml
+```
+
+#### Via Systemd
+
+Edit the systemd service file:
+
+```ini
+# /etc/systemd/system/vector.service.d/override.conf
+[Service]
+Environment="VECTOR_LOG=debug"
+```
+
+Then reload and restart:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart vector
+```
+
+### Log Format
+
+Control log output format:
+
+```bash
+# Human-readable text format (default)
+vector --config vector.yaml --log-format text
+
+# JSON format (for log aggregators)
+vector --config vector.yaml --log-format json
+
+# Set via environment variable
+export VECTOR_LOG_FORMAT=json
+vector --config vector.yaml
+```
+
+### Component-Specific Logging
+
+Enable debug logging for specific components:
+
+```bash
+# Debug file source only
+export VECTOR_LOG="info,vector::sources::file=debug"
+
+# Debug multiple components
+export VECTOR_LOG="info,vector::sources::file=debug,vector::sinks::elasticsearch=debug"
+
+# Trace specific module
+export VECTOR_LOG="info,vector::topology=trace"
+```
+
+### Internal Log Rate Limiting
+
+Control how frequently Vector logs repeat:
+
+```bash
+# Default: 10 seconds
+vector --config vector.yaml
+
+# Very verbose: 1 second
+vector --config vector.yaml --internal-log-rate-limit 1
+
+# Less verbose: 60 seconds
+vector --config vector.yaml --internal-log-rate-limit 60
+
+# Via environment variable
+export VECTOR_INTERNAL_LOG_RATE_LIMIT=1
+vector --config vector.yaml
+```
+
+## Common Issues and Solutions
+
+### Vector Won't Start
+
+#### Symptoms
+- Service fails to start
+- Exits immediately after starting
+- Returns non-zero exit code
+
+#### Diagnosis
+
+```bash
+# Check logs
+sudo journalctl -u vector -n 100 --no-pager
+
+# Validate configuration
+vector validate --config /etc/vector/vector.yaml
+
+# Test in foreground
+vector --config /etc/vector/vector.yaml --verbose
+```
+
+#### Common Causes
+
+**1. Configuration Syntax Error**
+
+```bash
+# Error in logs
+Configuration error: unknown field `typ`, expected `type`
+
+# Solution
+vector validate --config /etc/vector/vector.yaml
+# Fix the syntax error in your config
+```
+
+**2. Permission Issues**
+
+```bash
+# Error in logs
+Failed to open file: Permission denied
+
+# Solution - check file permissions
+ls -la /var/log/app.log
+sudo chmod 644 /var/log/app.log
+
+# Or run Vector as appropriate user
+sudo systemctl edit vector
+# Add: User=root (or appropriate user)
+```
+
+**3. Port Already in Use**
+
+```bash
+# Error in logs
+Address already in use (os error 98)
+
+# Solution - find what's using the port
+sudo lsof -i :8686
+
+# Change Vector's API port
+api:
+  enabled: true
+  address: 127.0.0.1:8687  # Different port
+```
+
+**4. Required Environment Variables Missing**
+
+```bash
+# Error in logs
+Environment variable not found: AWS_ACCESS_KEY_ID
+
+# Solution - set required variables
+export AWS_ACCESS_KEY_ID=your-key
+export AWS_SECRET_ACCESS_KEY=your-secret
+
+# Or disable environment variable interpolation
+vector --disable-env-var-interpolation --config vector.yaml
+```
+
+### No Data Flowing
+
+#### Symptoms
+- Sources receive data but sinks don't
+- Metrics show zero events
+- No output in destination systems
+
+#### Diagnosis
+
+```bash
+# Check internal metrics
+curl http://localhost:8686/graphql -H 'Content-Type: application/json' -d '{
+  "query": "subscription { componentReceivedEventsTotal(interval: 1000) { componentId metric { receivedEventsTotal } } }"
+}'
+
+# Enable debug logging
+export VECTOR_LOG=debug
+vector --config vector.yaml
+
+# Use vector tap to inspect data flow
+vector tap --config vector.yaml pattern 'source_name'
+```
+
+#### Common Causes
+
+**1. Topology Misconfigured**
+
+```yaml
+# ❌ Wrong - transform doesn't receive from source
+sources:
+  logs:
+    type: file
+    include: ["/var/log/*.log"]
+
+transforms:
+  parse:
+    type: remap
+    inputs: []  # Missing input!
+
+# ✅ Correct
+transforms:
+  parse:
+    type: remap
+    inputs: [logs]  # Receives from 'logs' source
+```
+
+**2. Transform Dropping Events**
+
+```yaml
+# Check if transform is dropping events
+transforms:
+  parse:
+    type: remap
+    inputs: [logs]
+    drop_on_error: true  # May be dropping events
+    source: |
+      .parsed = parse_json!(.message)  # Fails if not JSON
+
+# Solution: Handle errors gracefully
+transforms:
+  parse:
+    type: remap
+    inputs: [logs]
+    drop_on_error: false
+    source: |
+      .parsed = parse_json(.message) ?? {}  # Fallback to empty object
+```
+
+**3. Sink Health Check Failing**
+
+```bash
+# Enable health checks during startup
+vector --require-healthy --config vector.yaml
+
+# Check logs for health check errors
+sudo journalctl -u vector | grep -i health
+
+# Solution: Fix connectivity or disable health check temporarily
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    healthcheck:
+      enabled: false  # Temporary workaround
+```
+
+### High Memory Usage
+
+#### Symptoms
+- Vector using excessive RAM
+- Out of memory errors
+- System becomes unresponsive
+
+#### Diagnosis
+
+```bash
+# Check memory usage
+top -p $(pgrep vector)
+
+# Check component allocation
+curl http://localhost:8686/graphql -H 'Content-Type: application/json' -d '{
+  "query": "subscription { componentAllocatedBytes(interval: 1000) { componentId metric { allocatedBytes } } }"
+}'
+```
+
+#### Solutions
+
+**1. Reduce Buffer Size**
+
+```yaml
+# Limit buffer size
+sources:
+  logs:
+    type: file
+    include: ["/var/log/*.log"]
+    max_read_bytes: 10485760  # 10MB
+
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    buffer:
+      type: memory
+      max_events: 1000  # Reduce from default
+      max_size: 10485760  # 10MB
+```
+
+**2. Use Disk Buffers**
+
+```yaml
+# Offload to disk instead of memory
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    buffer:
+      type: disk
+      max_size: 268435456  # 256MB on disk
+```
+
+**3. Adjust Batch Settings**
+
+```yaml
+# Send smaller batches more frequently
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    batch:
+      max_events: 100  # Smaller batches
+      timeout_secs: 1  # More frequent sends
+```
+
+### High CPU Usage
+
+#### Symptoms
+- Vector consuming excessive CPU
+- System slowdown
+- Processing delays
+
+#### Diagnosis
+
+```bash
+# Check CPU usage
+top -p $(pgrep vector)
+
+# Enable profiling
+export VECTOR_LOG=trace
+vector --config vector.yaml
+```
+
+#### Solutions
+
+**1. Optimize Transforms**
+
+```yaml
+# Avoid expensive regex operations
+transforms:
+  parse:
+    type: remap
+    source: |
+      # ❌ Expensive regex
+      .parsed = parse_regex!(.message, r'(?<field1>\w+)\s+(?<field2>\d+)...')
+      
+      # ✅ Use specific parsers
+      .parsed = parse_json!(.message)
+```
+
+**2. Reduce Processing Frequency**
+
+```yaml
+# Increase batch intervals
+sinks:
+  s3:
+    type: aws_s3
+    batch:
+      timeout_secs: 300  # Wait 5 minutes before sending
+```
+
+**3. Limit Thread Count**
+
+```bash
+# Reduce thread usage
+vector --threads 2 --config vector.yaml
+
+# Or via environment
+export VECTOR_THREADS=2
+vector --config vector.yaml
+```
+
+### Events Being Dropped
+
+#### Symptoms
+- Received events != sent events
+- Metrics show drops
+- Data missing in destination
+
+#### Diagnosis
+
+```bash
+# Check error metrics
+curl http://localhost:8686/graphql -H 'Content-Type: application/json' -d '{
+  "query": "subscription { componentErrorsTotal(interval: 1000) { componentId metric { errorsTotal } } }"
+}'
+
+# Enable debug logging
+export VECTOR_LOG=debug
+```
+
+#### Solutions
+
+**1. Handle Transform Errors**
+
+```yaml
+transforms:
+  parse:
+    type: remap
+    drop_on_error: false  # Don't drop on error
+    drop_on_abort: false  # Don't drop on abort
+    source: |
+      .parsed = parse_json(.message) ?? {}
+```
+
+**2. Increase Buffer Size**
+
+```yaml
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    buffer:
+      max_events: 10000  # Larger buffer
+      when_full: block    # Block instead of dropping
+```
+
+**3. Add Retry Logic**
+
+```yaml
+sinks:
+  http:
+    type: http
+    uri: "http://api.example.com"
+    request:
+      retry_attempts: 5
+      retry_max_duration_secs: 300
+```
+
+### Slow Performance
+
+#### Symptoms
+- Events taking long to process
+- Increasing backlog
+- Delayed data in sinks
+
+#### Diagnosis
+
+```bash
+# Check throughput
+curl http://localhost:8686/graphql -H 'Content-Type: application/json' -d '{
+  "query": "subscription { componentSentEventsThroughputs(interval: 1000) { componentId throughput } }"
+}'
+```
+
+#### Solutions
+
+**1. Optimize Batch Size**
+
+```yaml
+# Send larger batches
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    batch:
+      max_events: 1000
+      max_bytes: 10485760
+```
+
+**2. Enable Compression**
+
+```yaml
+sinks:
+  http:
+    type: http
+    uri: "http://api.example.com"
+    compression: gzip  # Reduce network overhead
+```
+
+**3. Use Async Sinks**
+
+Most sinks are async by default, but ensure you're not blocking:
+
+```yaml
+sinks:
+  multi:
+    type: http
+    uri: "http://api.example.com"
+    request:
+      concurrency: 10  # Process multiple requests concurrently
+```
+
+### Connection Issues
+
+#### Symptoms
+- "Connection refused" errors
+- Timeouts
+- Health checks failing
+
+#### Diagnosis
+
+```bash
+# Test connectivity
+telnet elasticsearch 9200
+curl http://elasticsearch:9200
+
+# Check DNS resolution
+nslookup elasticsearch
+
+# Test from Vector's perspective (in container)
+docker exec vector curl http://elasticsearch:9200
+```
+
+#### Solutions
+
+**1. Verify Network Configuration**
+
+```yaml
+# Use correct hostname/IP
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    endpoint: "http://elasticsearch:9200"  # Check this
+```
+
+**2. Configure Timeouts**
+
+```yaml
+sinks:
+  http:
+    type: http
+    uri: "http://api.example.com"
+    request:
+      timeout_secs: 60  # Increase timeout
+```
+
+**3. Add TLS Configuration**
+
+```yaml
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    endpoint: "https://elasticsearch:9200"
+    tls:
+      verify_certificate: false  # For self-signed certs (testing only)
+```
+
+## Using Vector Tap
+
+Inspect data flowing through Vector in real-time:
+
+```bash
+# Tap a source
+vector tap --config vector.yaml pattern 'logs'
+
+# Tap a transform
+vector tap --config vector.yaml pattern 'parse'
+
+# Tap with filters
+vector tap --config vector.yaml pattern 'logs' --filter '.level == "error"'
+
+# Limit output
+vector tap --config vector.yaml pattern 'logs' --limit 10
+
+# Output as JSON
+vector tap --config vector.yaml pattern 'logs' --format json
+```
+
+## Using Vector Top
+
+Monitor Vector in real-time:
+
+```bash
+# Connect to local instance
+vector top
+
+# Connect to remote instance
+vector top --url http://remote-host:8686/graphql
+
+# Refresh interval
+vector top --refresh-interval 1000  # 1 second
+```
+
+## Debug Configuration
+
+Create a minimal debug configuration:
+
+```yaml
+# debug.yaml - Minimal config for testing
+api:
+  enabled: true
+  address: 127.0.0.1:8686
+
+sources:
+  test_input:
+    type: stdin
+
+transforms:
+  debug:
+    type: remap
+    inputs: [test_input]
+    source: |
+      log(., level: "info")  # Log each event
+      .
+
+sinks:
+  test_output:
+    type: console
+    inputs: [debug]
+    encoding:
+      codec: json
+```
+
+Test it:
+
+```bash
+echo '{"test": "data"}' | vector --config debug.yaml --verbose
+```
+
+## Getting Help
+
+If you can't resolve the issue:
+
+1. **Check documentation**: [https://vector.dev/docs/](https://vector.dev/docs/)
+2. **Search GitHub issues**: [https://github.com/vectordotdev/vector/issues](https://github.com/vectordotdev/vector/issues)
+3. **Ask in Discord**: [https://discord.gg/vector](https://discord.gg/vector)
+4. **Post in discussions**: [https://github.com/vectordotdev/vector/discussions](https://github.com/vectordotdev/vector/discussions)
+
+### Creating a Bug Report
+
+When reporting issues, include:
+
+- Vector version: `vector --version`
+- Operating system and version
+- Configuration file (sanitized)
+- Error messages and logs
+- Steps to reproduce
+- Expected vs actual behavior
+
+## Next Steps
+
+- Learn about [Monitoring](/administration/monitoring) Vector
+- Review [Configuration Validation](/administration/validation)
+- Understand [Upgrading](/administration/upgrading) procedures

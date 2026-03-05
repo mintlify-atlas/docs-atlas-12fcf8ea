@@ -1,0 +1,276 @@
+---
+title: File Source
+description: Collect logs from files with rotation and checkpointing support
+---
+
+The `file` source reads log data from files on the local filesystem. It supports file globbing, rotation, checkpointing, and multiline aggregation.
+
+## Configuration
+
+```toml
+[sources.my_file_source]
+type = "file"
+include = ["/var/log/**/*.log"]
+exclude = ["/var/log/excluded/**"]
+read_from = "beginning"
+```
+
+## Parameters
+
+<ParamField path="include" type="array" required>
+  Array of file patterns to include. Globbing is supported.
+  
+  ```toml
+  include = ["/var/log/**/*.log", "/app/logs/*.txt"]
+  ```
+</ParamField>
+
+<ParamField path="exclude" type="array" default="[]">
+  Array of file patterns to exclude. Takes precedence over `include`.
+  
+  ```toml
+  exclude = ["/var/log/binary-file.log"]
+  ```
+</ParamField>
+
+<ParamField path="read_from" type="string" default="beginning">
+  Where to start reading when a new file is discovered.
+  
+  Options:
+  - `beginning`: Read from the start of the file
+  - `end`: Read only new data appended to the file
+</ParamField>
+
+<ParamField path="file_key" type="string" default="file">
+  The event field name for the file path. Set to empty string to disable.
+  
+  ```toml
+  file_key = "path"
+  ```
+</ParamField>
+
+<ParamField path="data_dir" type="string">
+  Directory for storing file checkpoint positions. Defaults to the global `data_dir`.
+  
+  ```toml
+  data_dir = "/var/lib/vector/"
+  ```
+</ParamField>
+
+<ParamField path="max_line_bytes" type="integer" default="102400">
+  Maximum size of a line before it is discarded (in bytes).
+  
+  ```toml
+  max_line_bytes = 204800
+  ```
+</ParamField>
+
+<ParamField path="ignore_older_secs" type="integer">
+  Ignore files with a modification date older than this many seconds.
+  
+  ```toml
+  ignore_older_secs = 600
+  ```
+</ParamField>
+
+<ParamField path="host_key" type="string">
+  Overrides the field name for the hostname. Defaults to global `log_schema.host_key`.
+  
+  ```toml
+  host_key = "hostname"
+  ```
+</ParamField>
+
+<ParamField path="offset_key" type="string">
+  If set, adds the byte offset within the file to each event.
+  
+  ```toml
+  offset_key = "offset"
+  ```
+</ParamField>
+
+<ParamField path="glob_minimum_cooldown_ms" type="integer" default="1000">
+  Delay between file discovery calls (in milliseconds).
+  
+  ```toml
+  glob_minimum_cooldown_ms = 5000
+  ```
+</ParamField>
+
+<ParamField path="fingerprint" type="object">
+  Configuration for file identification strategy.
+  
+  **Checksum strategy:**
+  ```toml
+  [sources.my_file.fingerprint]
+  strategy = "checksum"
+  lines = 1
+  ignored_header_bytes = 0
+  ```
+  
+  **Device and inode strategy:**
+  ```toml
+  [sources.my_file.fingerprint]
+  strategy = "device_and_inode"
+  ```
+</ParamField>
+
+<ParamField path="multiline" type="object">
+  Multiline aggregation configuration.
+  
+  ```toml
+  [sources.my_file.multiline]
+  start_pattern = "^[^\\s]"
+  condition_pattern = "^[\\s]"
+  mode = "continue_through"
+  timeout_ms = 1000
+  ```
+</ParamField>
+
+<ParamField path="encoding" type="object">
+  Character encoding configuration for non-UTF-8 files.
+  
+  ```toml
+  [sources.my_file.encoding]
+  charset = "utf-16le"
+  ```
+</ParamField>
+
+<ParamField path="oldest_first" type="boolean" default="false">
+  Prioritize draining oldest files before reading from newer ones.
+  
+  ```toml
+  oldest_first = true
+  ```
+</ParamField>
+
+<ParamField path="remove_after_secs" type="integer">
+  Seconds to wait after reaching EOF before removing the file from tracking.
+  
+  ```toml
+  remove_after_secs = 60
+  ```
+</ParamField>
+
+<ParamField path="line_delimiter" type="string" default="\n">
+  String sequence used to separate lines.
+  
+  ```toml
+  line_delimiter = "\r\n"
+  ```
+</ParamField>
+
+## Output Schema
+
+The file source produces log events with the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | The log line content |
+| `file` | string | Full path to the source file |
+| `host` | string | Hostname where Vector is running |
+| `offset` | integer | Byte offset in the file (if `offset_key` is set) |
+| `timestamp` | timestamp | When the event was ingested |
+| `source_type` | string | Always "file" |
+
+## Examples
+
+### Basic File Tailing
+
+```toml
+[sources.logs]
+type = "file"
+include = ["/var/log/app/*.log"]
+read_from = "end"
+```
+
+### Multiple Patterns with Exclusions
+
+```toml
+[sources.system_logs]
+type = "file"
+include = [
+  "/var/log/**/*.log",
+  "/var/log/syslog",
+  "/var/log/messages"
+]
+exclude = [
+  "/var/log/debug/**",
+  "/var/log/**/*.gz"
+]
+```
+
+### Java Stack Trace Aggregation
+
+```toml
+[sources.java_logs]
+type = "file"
+include = ["/app/logs/*.log"]
+
+[sources.java_logs.multiline]
+start_pattern = "^[^\\s]"
+condition_pattern = "^[\\s]"
+mode = "continue_through"
+timeout_ms = 1000
+```
+
+### Custom Fields and Checkpointing
+
+```toml
+[sources.app_logs]
+type = "file"
+include = ["/app/**/*.log"]
+file_key = "log_file"
+host_key = "server"
+offset_key = "position"
+data_dir = "/var/lib/vector/checkpoints"
+```
+
+### Non-UTF-8 Encoding
+
+```toml
+[sources.legacy_logs]
+type = "file"
+include = ["/legacy/logs/*.log"]
+
+[sources.legacy_logs.encoding]
+charset = "utf-16le"
+```
+
+## How It Works
+
+### File Discovery
+
+The file source periodically scans for files matching the `include` patterns. The scan frequency is controlled by `glob_minimum_cooldown_ms`.
+
+### Checkpointing
+
+File positions are checkpointed to disk, allowing Vector to resume from where it left off after a restart. Checkpoints are stored in the `data_dir`.
+
+### File Rotation
+
+The source handles file rotation gracefully:
+- Files are identified using the configured fingerprinting strategy
+- When a file is rotated, the source continues reading the old file until EOF
+- The new file is automatically discovered and tailed
+
+### Fingerprinting
+
+Two strategies are available:
+
+1. **Checksum** (default): Uses the first N lines to compute a checksum
+2. **Device and Inode**: Uses filesystem metadata (Unix only)
+
+## Performance
+
+- Handles millions of events per second with proper tuning
+- Memory usage scales with the number of files being watched
+- Checkpoint frequency impacts performance and durability trade-off
+
+## Best Practices
+
+1. Use specific glob patterns to minimize file discovery overhead
+2. Set `ignore_older_secs` to avoid processing old rotated files
+3. Configure appropriate `max_line_bytes` to prevent memory issues
+4. Use `oldest_first = true` when backfilling historical data
+5. Enable `remove_after_secs` to prevent unbounded state growth

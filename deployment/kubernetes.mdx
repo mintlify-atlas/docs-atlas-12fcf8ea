@@ -1,0 +1,605 @@
+---
+title: Kubernetes Deployment
+description: Deploy Vector on Kubernetes for logs, metrics, and traces collection
+---
+
+Vector provides native Kubernetes support with pre-built manifests for both agent and aggregator deployments.
+
+## Quick Start
+
+The fastest way to deploy Vector on Kubernetes is using the official Helm chart:
+
+```bash
+helm repo add vector https://helm.vector.dev
+helm repo update
+helm install vector vector/vector
+```
+
+For manual deployment using manifests, see the examples below.
+
+## Agent Deployment (DaemonSet)
+
+Deploy Vector as a DaemonSet to collect logs and metrics from every node in your cluster.
+
+### Agent ConfigMap
+
+Create a ConfigMap with the agent configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector
+  namespace: default
+  labels:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: Agent
+data:
+  agent.yaml: |
+    data_dir: /vector-data-dir
+    
+    api:
+      enabled: true
+      address: 127.0.0.1:8686
+      playground: false
+    
+    sources:
+      # Collect Kubernetes pod logs
+      kubernetes_logs:
+        type: kubernetes_logs
+      
+      # Collect host metrics from each node
+      host_metrics:
+        type: host_metrics
+        filesystem:
+          devices:
+            excludes: [binfmt_misc]
+          filesystems:
+            excludes: [binfmt_misc]
+          mountpoints:
+            excludes: ["*/proc/sys/fs/binfmt_misc"]
+      
+      # Collect Vector's own metrics
+      internal_metrics:
+        type: internal_metrics
+    
+    sinks:
+      # Export metrics via Prometheus
+      prom_exporter:
+        type: prometheus_exporter
+        inputs: [host_metrics, internal_metrics]
+        address: 0.0.0.0:9090
+      
+      # Forward logs to aggregator
+      to_aggregator:
+        type: vector
+        inputs: [kubernetes_logs]
+        address: "vector-aggregator:6000"
+        version: "2"
+```
+
+### Service Account and RBAC
+
+Vector needs permissions to read Kubernetes API:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vector
+  namespace: default
+  labels:
+    app.kubernetes.io/name: vector
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vector
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+      - nodes
+      - pods
+    verbs:
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vector
+subjects:
+  - kind: ServiceAccount
+    name: vector
+    namespace: default
+```
+
+### Agent DaemonSet
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vector
+  namespace: default
+  labels:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/instance: vector
+    app.kubernetes.io/component: Agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vector
+      app.kubernetes.io/component: Agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vector
+        app.kubernetes.io/component: Agent
+        vector.dev/exclude: "true"  # Don't collect Vector's own logs
+    spec:
+      serviceAccountName: vector
+      containers:
+        - name: vector
+          image: timberio/vector:0.53.0-distroless-libc
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config-dir
+            - /etc/vector/
+          env:
+            - name: VECTOR_LOG
+              value: "info"
+            - name: VECTOR_SELF_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: VECTOR_SELF_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: VECTOR_SELF_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PROCFS_ROOT
+              value: "/host/proc"
+            - name: SYSFS_ROOT
+              value: "/host/sys"
+          ports:
+            - name: prom-exporter
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /vector-data-dir
+            - name: config
+              mountPath: /etc/vector/
+              readOnly: true
+            - name: var-log
+              mountPath: /var/log/
+              readOnly: true
+            - name: var-lib
+              mountPath: /var/lib
+              readOnly: true
+            - name: procfs
+              mountPath: /host/proc
+              readOnly: true
+            - name: sysfs
+              mountPath: /host/sys
+              readOnly: true
+      terminationGracePeriodSeconds: 60
+      volumes:
+        - name: config
+          configMap:
+            name: vector
+        - name: data
+          hostPath:
+            path: /var/lib/vector
+        - name: var-log
+          hostPath:
+            path: /var/log/
+        - name: var-lib
+          hostPath:
+            path: /var/lib/
+        - name: procfs
+          hostPath:
+            path: /proc
+        - name: sysfs
+          hostPath:
+            path: /sys
+```
+
+## Aggregator Deployment (StatefulSet)
+
+Deploy Vector as a StatefulSet to aggregate and process data from agents.
+
+### Aggregator ConfigMap
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-aggregator
+  namespace: default
+  labels:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: Aggregator
+data:
+  aggregator.yaml: |
+    data_dir: /vector-data-dir
+    
+    api:
+      enabled: true
+      address: 127.0.0.1:8686
+      playground: false
+    
+    sources:
+      # Receive from Vector agents
+      vector:
+        type: vector
+        address: 0.0.0.0:6000
+        version: "2"
+      
+      # Accept various protocol inputs
+      datadog_agent:
+        type: datadog_agent
+        address: 0.0.0.0:8282
+      
+      fluent:
+        type: fluent
+        address: 0.0.0.0:24224
+      
+      logstash:
+        type: logstash
+        address: 0.0.0.0:5044
+      
+      splunk_hec:
+        type: splunk_hec
+        address: 0.0.0.0:8080
+      
+      syslog:
+        type: syslog
+        address: 0.0.0.0:9000
+        mode: tcp
+      
+      statsd:
+        type: statsd
+        address: 0.0.0.0:8125
+        mode: tcp
+      
+      internal_metrics:
+        type: internal_metrics
+    
+    transforms:
+      # Parse and enrich logs
+      process_logs:
+        type: remap
+        inputs: ["vector", "fluent", "logstash"]
+        source: |
+          .cluster = "production"
+          .aggregator = get_hostname!()
+    
+    sinks:
+      # Export metrics
+      prom_exporter:
+        type: prometheus_exporter
+        inputs: [internal_metrics]
+        address: 0.0.0.0:9090
+      
+      # Forward to your destination
+      stdout:
+        type: console
+        inputs: [process_logs]
+        encoding:
+          codec: json
+```
+
+### Aggregator Service
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector-aggregator
+  namespace: default
+  labels:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: Aggregator
+spec:
+  type: ClusterIP
+  ports:
+    - name: vector
+      port: 6000
+      targetPort: 6000
+      protocol: TCP
+    - name: datadog-agent
+      port: 8282
+      targetPort: 8282
+      protocol: TCP
+    - name: fluent
+      port: 24224
+      targetPort: 24224
+      protocol: TCP
+    - name: logstash
+      port: 5044
+      targetPort: 5044
+      protocol: TCP
+    - name: splunk-hec
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+    - name: syslog
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+    - name: statsd
+      port: 8125
+      targetPort: 8125
+      protocol: TCP
+    - name: prom-exporter
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: Aggregator
+```
+
+### Aggregator StatefulSet
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vector-aggregator
+  namespace: default
+  labels:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: Aggregator
+spec:
+  replicas: 2
+  serviceName: vector-aggregator-headless
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vector
+      app.kubernetes.io/component: Aggregator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vector
+        app.kubernetes.io/component: Aggregator
+    spec:
+      serviceAccountName: vector
+      containers:
+        - name: vector
+          image: timberio/vector:0.53.0-distroless-libc
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config-dir
+            - /etc/vector/
+          env:
+            - name: VECTOR_LOG
+              value: "info"
+          ports:
+            - name: vector
+              containerPort: 6000
+              protocol: TCP
+            - name: datadog-agent
+              containerPort: 8282
+              protocol: TCP
+            - name: fluent
+              containerPort: 24224
+              protocol: TCP
+            - name: logstash
+              containerPort: 5044
+              protocol: TCP
+            - name: splunk-hec
+              containerPort: 8080
+              protocol: TCP
+            - name: syslog
+              containerPort: 9000
+              protocol: TCP
+            - name: statsd
+              containerPort: 8125
+              protocol: TCP
+            - name: prom-exporter
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          volumeMounts:
+            - name: data
+              mountPath: /vector-data-dir
+            - name: config
+              mountPath: /etc/vector/
+              readOnly: true
+      terminationGracePeriodSeconds: 60
+      volumes:
+        - name: config
+          configMap:
+            name: vector-aggregator
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+```
+
+### Headless Service for StatefulSet
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector-aggregator-headless
+  namespace: default
+  labels:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: Aggregator
+spec:
+  clusterIP: None
+  ports:
+    - name: vector
+      port: 6000
+      targetPort: 6000
+  selector:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: Aggregator
+```
+
+## Complete Deployment
+
+Deploy both agent and aggregator together:
+
+```bash
+# Create namespace
+kubectl create namespace vector
+
+# Deploy RBAC
+kubectl apply -f rbac.yaml
+
+# Deploy agent
+kubectl apply -f agent-configmap.yaml
+kubectl apply -f agent-daemonset.yaml
+
+# Deploy aggregator
+kubectl apply -f aggregator-configmap.yaml
+kubectl apply -f aggregator-service.yaml
+kubectl apply -f aggregator-statefulset.yaml
+
+# Verify deployment
+kubectl get pods -n vector
+kubectl logs -n vector -l app.kubernetes.io/component=Agent
+kubectl logs -n vector -l app.kubernetes.io/component=Aggregator
+```
+
+## Monitoring
+
+### ServiceMonitor for Prometheus Operator
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vector
+  namespace: vector
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vector
+  endpoints:
+    - port: prom-exporter
+      interval: 30s
+      path: /metrics
+```
+
+## Best Practices
+
+### Resource Management
+
+- **Agent**: Start with 100m CPU and 128Mi memory, adjust based on log volume
+- **Aggregator**: Start with 500m CPU and 512Mi memory, scale horizontally
+- Use resource limits to prevent resource exhaustion
+- Monitor memory usage and adjust as needed
+
+### High Availability
+
+- Run multiple aggregator replicas (minimum 2)
+- Use PodDisruptionBudgets to prevent all pods being down
+- Configure appropriate health checks and readiness probes
+- Use pod anti-affinity to spread pods across nodes
+
+### Security
+
+- Use dedicated namespace for Vector
+- Apply least-privilege RBAC permissions
+- Use NetworkPolicies to restrict traffic
+- Enable TLS for agent-to-aggregator communication
+- Use secrets for sensitive credentials
+
+### Configuration Management
+
+- Store configurations in ConfigMaps
+- Use `kubectl rollout restart` to apply config changes
+- Version your manifests in Git
+- Use Kustomize or Helm for environment-specific configs
+
+### Observability
+
+- Enable internal metrics on all instances
+- Export metrics to Prometheus
+- Set up alerts for high memory usage, processing lag
+- Use Vector's GraphQL API for debugging
+
+## Troubleshooting
+
+### Check logs
+
+```bash
+# Agent logs
+kubectl logs -n vector -l app.kubernetes.io/component=Agent --tail=100
+
+# Aggregator logs
+kubectl logs -n vector -l app.kubernetes.io/component=Aggregator --tail=100
+
+# Follow logs
+kubectl logs -n vector <pod-name> -f
+```
+
+### Validate configuration
+
+```bash
+# Exec into pod and validate
+kubectl exec -n vector <pod-name> -- vector validate /etc/vector/
+```
+
+### Check connectivity
+
+```bash
+# Test agent to aggregator connectivity
+kubectl exec -n vector <agent-pod> -- nc -zv vector-aggregator 6000
+```
+
+### View internal metrics
+
+```bash
+# Port-forward to access Prometheus metrics
+kubectl port-forward -n vector <pod-name> 9090:9090
+curl http://localhost:9090/metrics
+```
+
+## Upgrading
+
+```bash
+# Update image in your manifests or Helm values
+# Rolling update for DaemonSet
+kubectl set image daemonset/vector -n vector vector=timberio/vector:0.53.0-distroless-libc
+
+# Rolling update for StatefulSet
+kubectl set image statefulset/vector-aggregator -n vector vector=timberio/vector:0.53.0-distroless-libc
+
+# Monitor rollout
+kubectl rollout status daemonset/vector -n vector
+kubectl rollout status statefulset/vector-aggregator -n vector
+```

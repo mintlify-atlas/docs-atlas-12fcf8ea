@@ -1,0 +1,580 @@
+---
+title: Buffering
+description: Managing backpressure and reliability with memory and disk buffers
+---
+
+Buffering is Vector's mechanism for handling backpressure and ensuring reliable data delivery. Buffers sit between components (especially before sinks) to absorb temporary slowdowns, network issues, or downstream unavailability without losing data.
+
+## Why Buffering Matters
+
+In observability pipelines, downstream systems can become slow or unavailable:
+
+- **Network issues**: Temporary connectivity problems
+- **Destination overload**: Elasticsearch cluster under heavy load
+- **Rate limiting**: API throttling from SaaS platforms
+- **Batch processing**: Waiting for enough events to send efficiently
+- **Scheduled downtime**: Maintenance windows for downstream services
+
+Without buffering, these issues would:
+- Cause data loss (dropped events)
+- Propagate backpressure to sources (slowing collection)
+- Reduce pipeline throughput
+
+## Buffer Types
+
+Vector supports two buffer types: **memory** and **disk**.
+
+<CardGroup cols={2}>
+  <Card title="Memory Buffers" icon="memory">
+    Fast, in-RAM buffering for normal operation
+  </Card>
+  <Card title="Disk Buffers" icon="hard-drive">
+    Persistent, high-capacity buffering for reliability
+  </Card>
+</CardGroup>
+
+### Memory Buffers
+
+Memory buffers store events in RAM for fast access.
+
+**Configuration:**
+
+```yaml
+sinks:
+  my_sink:
+    type: elasticsearch
+    buffer:
+      type: memory
+      max_events: 500           # Buffer up to 500 events
+      when_full: block          # What to do when full (default)
+```
+
+**Characteristics:**
+
+- ✅ **Fast**: No disk I/O overhead
+- ✅ **Low latency**: Immediate access
+- ✅ **Simple**: No persistence complexity
+- ❌ **Data loss on crash**: Events in buffer are lost if Vector crashes
+- ❌ **Limited capacity**: Constrained by available RAM
+- ❌ **Not persistent**: Lost on restart
+
+**When to use:**
+- Non-critical data (debug logs, metrics)
+- Low-latency requirements
+- Stable downstream systems
+- Cost-optimized deployments (best-effort delivery)
+
+### Disk Buffers
+
+Disk buffers store events on disk for durability.
+
+**Configuration:**
+
+```yaml
+sinks:
+  critical_sink:
+    type: aws_s3
+    buffer:
+      type: disk
+      max_size: 268435488       # 256MB on disk
+      when_full: block          # Block when buffer is full
+```
+
+**Characteristics:**
+
+- ✅ **Durable**: Survives Vector crashes and restarts
+- ✅ **Large capacity**: Can buffer gigabytes of data
+- ✅ **Persistent**: Data preserved across restarts
+- ✅ **Reliable**: No data loss on process failure
+- ❌ **Slower**: Disk I/O adds latency
+- ❌ **More complex**: Requires disk space management
+- ❌ **I/O overhead**: Can impact system performance
+
+**When to use:**
+- Critical data (audit logs, financial transactions)
+- Unreliable networks
+- Unstable downstream systems
+- Large bursts of data
+- Compliance requirements
+
+### Comparison
+
+| Feature | Memory Buffer | Disk Buffer |
+|---------|--------------|-------------|
+| Speed | Very fast | Moderate |
+| Latency | < 1ms | 1-10ms |
+| Capacity | MB (hundreds of events) | GB (millions of events) |
+| Durability | Lost on crash | Survives crashes |
+| Use case | Best-effort delivery | Guaranteed delivery |
+| Resource impact | RAM usage | Disk I/O + space |
+
+## Backpressure Handling
+
+When a buffer fills up, Vector must decide what to do. This is controlled by the `when_full` setting.
+
+### Block (Default)
+
+Wait for space to become available. This ensures no data loss.
+
+```yaml
+sinks:
+  elasticsearch:
+    buffer:
+      type: memory
+      max_events: 500
+      when_full: block          # Default behavior
+```
+
+**How it works:**
+
+1. Buffer fills to capacity
+2. Sink stops accepting new events
+3. Backpressure propagates upstream through transforms
+4. Eventually reaches sources, which slow down
+5. When buffer drains, flow resumes
+
+**Effects:**
+
+- ✅ No data loss
+- ❌ Sources may slow down or queue
+- ❌ For file sources: Reading pauses (position checkpointed)
+- ❌ For network sources: Connections queue or TCP windows shrink
+
+**When to use:**
+- Critical data that cannot be lost
+- Audit logs
+- Financial transactions
+- Compliance-required data
+
+### Drop Newest
+
+Discard new events when buffer is full. This prioritizes throughput over completeness.
+
+```yaml
+sinks:
+  best_effort_metrics:
+    buffer:
+      type: memory
+      max_events: 1000
+      when_full: drop_newest    # Discard events when full
+```
+
+**How it works:**
+
+1. Buffer fills to capacity
+2. New events are immediately dropped
+3. Dropped events are counted in `component_discarded_events_total` metric
+4. No backpressure propagates upstream
+5. Sources continue reading at full speed
+
+**Effects:**
+
+- ✅ No slowdown to sources
+- ✅ Maximum throughput maintained
+- ❌ Data loss (events are dropped)
+
+**When to use:**
+- Non-critical data (debug logs)
+- High-volume metrics (sampling acceptable)
+- Performance is more important than completeness
+- Load shedding scenarios
+
+<Warning>
+  Using `drop_newest` will result in data loss. Only use this when throughput is more critical than completeness.
+</Warning>
+
+## Configuration Examples
+
+### Critical Path: Disk Buffer + Block
+
+For audit logs that must not be lost:
+
+```yaml
+sinks:
+  audit_logs:
+    type: elasticsearch
+    inputs:
+      - audit_events
+    endpoint: https://elasticsearch.example.com
+    buffer:
+      type: disk
+      max_size: 1073741824      # 1GB disk buffer
+      when_full: block          # Never drop events
+    batch:
+      timeout_secs: 1           # Send quickly
+    acknowledgements:
+      enabled: true             # Wait for confirmation
+```
+
+### High-Volume Path: Memory Buffer + Drop
+
+For high-volume debug logs:
+
+```yaml
+sinks:
+  debug_logs:
+    type: aws_s3
+    inputs:
+      - debug_events
+    bucket: debug-logs
+    buffer:
+      type: memory
+      max_events: 10000         # Large memory buffer
+      when_full: drop_newest    # Shed load if needed
+    batch:
+      max_events: 1000
+      timeout_secs: 60          # Batch for efficiency
+```
+
+### Balanced: Memory Buffer + Block
+
+For application logs (important but not critical):
+
+```yaml
+sinks:
+  app_logs:
+    type: datadog_logs
+    inputs:
+      - application_logs
+    buffer:
+      type: memory
+      max_events: 500           # Moderate buffer
+      when_full: block          # Don't lose data
+    request:
+      retry_attempts: 5         # Retry on failure
+```
+
+## Disk Buffer Deep Dive
+
+### Storage Location
+
+Disk buffers are stored in Vector's data directory:
+
+```yaml
+# Global configuration
+data_dir: /var/lib/vector        # Default: /var/lib/vector
+
+sinks:
+  my_sink:
+    buffer:
+      type: disk
+      max_size: 268435488
+    # Stored at: /var/lib/vector/buffer/<sink-name>/
+```
+
+### Buffer Structure
+
+Disk buffers use a write-ahead log (WAL) structure:
+
+```
+/var/lib/vector/buffer/my_sink/
+├── data/
+│   ├── segment-00001.db    # Event data
+│   ├── segment-00002.db
+│   └── segment-00003.db
+└── metadata.db              # Buffer state
+```
+
+**Characteristics:**
+- Events are written sequentially to segment files
+- Segments are deleted after events are delivered
+- Buffer survives Vector crashes and restarts
+- Resumption is automatic (no manual intervention)
+
+### Disk Buffer Sizing
+
+Choose buffer size based on:
+
+1. **Expected downtime**: How long can the destination be unavailable?
+   - 5 minutes of downtime at 1000 events/sec = 300,000 events
+   - At ~1KB/event = ~300MB needed
+
+2. **Event rate**: Higher rates need larger buffers
+   ```
+   buffer_size = event_rate × downtime_tolerance × event_size
+   ```
+
+3. **Available disk space**: Leave headroom for OS and other applications
+
+**Example calculation:**
+```
+Event rate: 5,000 events/second
+Event size: 2KB average
+Downtime tolerance: 10 minutes
+
+Buffer size = 5,000 × 600 × 2,048 = 6,144,000,000 bytes ≈ 6GB
+```
+
+### Disk Space Management
+
+Monitor disk usage to prevent issues:
+
+```yaml
+sources:
+  host_metrics:
+    type: host_metrics
+    filesystem:
+      devices:
+        includes: [/var/lib/vector]
+
+transforms:
+  alert_on_full:
+    type: filter
+    inputs: [host_metrics]
+    condition: |
+      .name == "disk_used_percent" && .value > 85
+
+sinks:
+  alerts:
+    type: datadog_logs
+    inputs: [alert_on_full]
+```
+
+### Performance Tuning
+
+Disk buffers can be tuned for different scenarios:
+
+```yaml
+sinks:
+  tuned_sink:
+    buffer:
+      type: disk
+      max_size: 1073741824
+    batch:
+      max_events: 1000          # Larger batches reduce I/O
+      timeout_secs: 10
+    request:
+      concurrency: 10           # Drain buffer faster
+```
+
+## Monitoring Buffers
+
+Vector exposes metrics for buffer health:
+
+### Key Metrics
+
+```yaml
+sources:
+  vector_metrics:
+    type: internal_metrics
+
+transforms:
+  filter_buffer_metrics:
+    type: filter
+    inputs: [vector_metrics]
+    condition: |
+      starts_with!(.name, "buffer_")
+
+sinks:
+  prometheus:
+    type: prometheus_exporter
+    inputs: [filter_buffer_metrics]
+    address: 0.0.0.0:9598
+```
+
+**Important metrics:**
+
+- `buffer_received_events_total`: Events entering buffer
+- `buffer_sent_events_total`: Events leaving buffer
+- `buffer_events`: Current events in buffer
+- `buffer_byte_size`: Current buffer size in bytes
+- `buffer_max_size`: Configured maximum size
+- `component_discarded_events_total`: Events dropped (if `drop_newest`)
+
+### Buffer Utilization
+
+Monitor buffer fullness:
+
+```yaml
+transforms:
+  buffer_usage:
+    type: remap
+    inputs: [vector_metrics]
+    source: |
+      if .name == "buffer_events" {
+        .usage_percent = (.value / .tags.max_events) * 100
+      }
+
+transforms:
+  buffer_alerts:
+    type: filter
+    inputs: [buffer_usage]
+    condition: '.usage_percent > 80'
+
+sinks:
+  alert:
+    type: datadog_logs
+    inputs: [buffer_alerts]
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Match buffer type to data criticality">
+    ```yaml
+    # Critical: Disk buffer
+    sinks:
+      audit_logs:
+        buffer:
+          type: disk
+          max_size: 1073741824
+    
+    # Non-critical: Memory buffer
+    sinks:
+      debug_logs:
+        buffer:
+          type: memory
+          max_events: 500
+    ```
+  </Accordion>
+  
+  <Accordion title="Size buffers appropriately">
+    - **Too small**: Frequent backpressure, reduced throughput
+    - **Too large**: Wasted resources, delayed failure detection
+    - **Rule of thumb**: 5-10 minutes of expected data at normal rates
+  </Accordion>
+  
+  <Accordion title="Monitor buffer utilization">
+    Set up alerts for:
+    - Buffer > 80% full (indicates sustained slowness)
+    - Buffer full for > 5 minutes (indicates serious issue)
+    - Dropped events > 0 (when using `drop_newest`)
+  </Accordion>
+  
+  <Accordion title="Use disk buffers for batch sinks">
+    Sinks that batch large amounts of data benefit from disk buffers:
+    
+    ```yaml
+    sinks:
+      s3_hourly:
+        type: aws_s3
+        buffer:
+          type: disk            # Handle large batches
+          max_size: 5368709120  # 5GB
+        batch:
+          max_bytes: 52428800   # 50MB per file
+          timeout_secs: 3600    # Batch hourly
+    ```
+  </Accordion>
+  
+  <Accordion title="Consider buffer chaining">
+    Use multiple buffers in series:
+    
+    ```yaml
+    # Fast memory buffer before transform
+    transforms:
+      parse:
+        type: remap
+        inputs: [source]
+        # Implicit memory buffer
+    
+    # Large disk buffer before sink
+    sinks:
+      destination:
+        type: elasticsearch
+        inputs: [parse]
+        buffer:
+          type: disk
+          max_size: 1073741824
+    ```
+  </Accordion>
+  
+  <Accordion title="Test failover scenarios">
+    Verify buffer behavior:
+    1. Fill buffer to capacity
+    2. Stop destination service
+    3. Verify backpressure or dropping
+    4. Restart destination
+    5. Verify buffer drains
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Buffer Full
+
+**Symptoms:**
+- `buffer_events` metric at maximum
+- Sources slowing down (if `when_full: block`)
+- Events being dropped (if `when_full: drop_newest`)
+
+**Solutions:**
+1. **Increase buffer size**:
+   ```yaml
+   buffer:
+     max_size: 2147483648  # Double to 2GB
+   ```
+
+2. **Increase sink throughput**:
+   ```yaml
+   request:
+     concurrency: 20       # More parallel requests
+   batch:
+     max_events: 1000      # Larger batches
+   ```
+
+3. **Add more sink instances** (horizontal scaling)
+
+4. **Reduce data volume** (sampling, filtering)
+
+### Disk Buffer Growing
+
+**Symptoms:**
+- Buffer size increasing over time
+- Disk space shrinking
+- `buffer_byte_size` metric growing
+
+**Causes:**
+- Destination is slower than source
+- Network issues
+- Rate limiting
+
+**Solutions:**
+1. Check destination health and performance
+2. Verify network connectivity
+3. Review rate limits
+4. Increase sink concurrency
+5. Scale out (multiple Vector instances)
+
+### Buffer Not Draining After Recovery
+
+**Symptoms:**
+- Destination recovers
+- Buffer remains full
+- Events not flowing
+
+**Solutions:**
+1. Check Vector logs for errors
+2. Verify sink configuration
+3. Restart Vector (disk buffers persist)
+4. Check file permissions on data directory
+
+### Disk Buffer Corruption
+
+**Symptoms:**
+- Vector fails to start
+- Logs show buffer errors
+- Metadata errors in logs
+
+**Solutions:**
+1. **Backup buffer directory**:
+   ```bash
+   cp -r /var/lib/vector/buffer /tmp/backup
+   ```
+
+2. **Remove corrupted buffer**:
+   ```bash
+   rm -rf /var/lib/vector/buffer/<sink-name>
+   ```
+
+3. **Restart Vector** (creates new buffer)
+
+<Warning>
+  Removing a buffer directory will lose any events stored in that buffer.
+</Warning>
+
+## Related Topics
+
+- [Pipeline Model](/concepts/pipeline-model) - How buffers fit in Vector's topology
+- [Sinks](/concepts/sinks) - Configuring sink buffering
+- [Sources](/concepts/sources) - How sources handle backpressure

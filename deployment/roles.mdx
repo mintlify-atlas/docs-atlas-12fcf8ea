@@ -1,0 +1,269 @@
+---
+title: Deployment Roles
+description: Understanding Vector's agent and aggregator deployment modes
+---
+
+Vector can be deployed in different roles depending on your architecture needs. The two primary deployment roles are **Agent** and **Aggregator**.
+
+## Agent Role
+
+The agent role is designed to run on every node in your infrastructure to collect local data. Agents are lightweight and run close to the data source.
+
+### Characteristics
+
+- **Deployed per-node**: One instance per host/node
+- **Local data collection**: Reads logs, metrics, and traces from the local system
+- **Lightweight**: Minimal resource footprint
+- **Edge processing**: Can perform light transformations before forwarding
+- **Resilient**: Operates independently, doesn't depend on centralized services
+
+### Common Use Cases
+
+- Collecting Kubernetes pod logs via `kubernetes_logs` source
+- Gathering host metrics from local system
+- Tailing log files from local filesystem
+- Collecting application metrics via StatsD or Prometheus
+- Forwarding data to aggregators or directly to sinks
+
+### Example Agent Configuration
+
+```yaml
+data_dir: /var/lib/vector
+
+sources:
+  # Collect logs from local files
+  app_logs:
+    type: file
+    include:
+      - /var/log/app/*.log
+  
+  # Collect host metrics
+  host_metrics:
+    type: host_metrics
+    collectors:
+      - cpu
+      - memory
+      - disk
+      - network
+  
+  # Kubernetes logs (when running as DaemonSet)
+  kubernetes_logs:
+    type: kubernetes_logs
+
+transforms:
+  # Add host identifier
+  add_host:
+    type: remap
+    inputs: ["app_logs"]
+    source: |
+      .host = get_hostname!()
+
+sinks:
+  # Forward to aggregator
+  to_aggregator:
+    type: vector
+    inputs: ["add_host", "host_metrics", "kubernetes_logs"]
+    address: "aggregator.example.com:6000"
+    version: "2"
+```
+
+## Aggregator Role
+
+The aggregator role receives data from multiple agents, performs centralized processing, and routes data to final destinations.
+
+### Characteristics
+
+- **Centralized deployment**: One or more instances serving multiple agents
+- **Data aggregation**: Receives data from multiple sources
+- **Heavy processing**: Performs complex transformations, enrichment, and routing
+- **Buffering**: Provides buffering and backpressure handling
+- **Scalable**: Can be horizontally scaled based on throughput needs
+
+### Common Use Cases
+
+- Receiving data from multiple Vector agents
+- Centralized parsing and transformation
+- Data enrichment (GeoIP, external lookups)
+- Routing to multiple destinations
+- Aggregating metrics across the infrastructure
+- Implementing complex filtering and sampling logic
+
+### Example Aggregator Configuration
+
+```yaml
+data_dir: /var/lib/vector
+
+sources:
+  # Receive from Vector agents
+  from_agents:
+    type: vector
+    address: "0.0.0.0:6000"
+    version: "2"
+  
+  # Also accept data from other protocols
+  syslog:
+    type: syslog
+    address: "0.0.0.0:9000"
+    mode: tcp
+  
+  fluent:
+    type: fluent
+    address: "0.0.0.0:24224"
+
+transforms:
+  # Parse and structure logs
+  parse_logs:
+    type: remap
+    inputs: ["from_agents"]
+    source: |
+      . = parse_json!(.message)
+      .timestamp = parse_timestamp!(.timestamp, format: "%+")
+  
+  # Sample high-volume logs
+  sample:
+    type: sample
+    inputs: ["parse_logs"]
+    rate: 10  # Keep 1 in 10
+  
+  # Route by log level
+  route_by_level:
+    type: route
+    inputs: ["sample"]
+    route:
+      error: '.level == "error"'
+      warn: '.level == "warn"'
+      info: '.level == "info"'
+
+sinks:
+  # Critical logs to primary storage
+  errors_to_elasticsearch:
+    type: elasticsearch
+    inputs: ["route_by_level.error", "route_by_level.warn"]
+    endpoint: "https://elasticsearch.example.com"
+    bulk:
+      index: "logs-errors-%Y.%m.%d"
+  
+  # All logs to S3 for long-term storage
+  all_to_s3:
+    type: aws_s3
+    inputs: ["parse_logs"]
+    bucket: "log-archive"
+    compression: gzip
+    encoding:
+      codec: json
+  
+  # Metrics to Prometheus
+  metrics_to_prometheus:
+    type: prometheus_remote_write
+    inputs: ["from_agents"]
+    endpoint: "https://prometheus.example.com/api/v1/write"
+```
+
+## Hybrid Deployments
+
+Many organizations use both roles together:
+
+```
+┌─────────────┐
+│   Host 1    │
+│  ┌────────┐ │
+│  │ Agent  │─┼──┐
+│  └────────┘ │  │
+└─────────────┘  │
+                 │
+┌─────────────┐  │     ┌──────────────┐     ┌─────────────────┐
+│   Host 2    │  │     │              │     │                 │
+│  ┌────────┐ │  ├────▶│  Aggregator  │────▶│  Elasticsearch  │
+│  │ Agent  │─┼──┤     │              │     │                 │
+│  └────────┘ │  │     └──────────────┘     └─────────────────┘
+└─────────────┘  │            │
+                 │            │              ┌─────────────────┐
+┌─────────────┐  │            └─────────────▶│       S3        │
+│   Host 3    │  │                           │                 │
+│  ┌────────┐ │  │                           └─────────────────┘
+│  │ Agent  │─┼──┘
+│  └────────┘ │
+└─────────────┘
+```
+
+### Benefits of Hybrid Architecture
+
+1. **Reduced load**: Agents handle local collection; aggregators handle heavy processing
+2. **Network efficiency**: Local filtering reduces data transfer
+3. **Reliability**: Agents can buffer locally if aggregators are unavailable
+4. **Flexibility**: Centralized configuration changes without touching edge nodes
+5. **Security**: Single egress point for external destinations
+
+## Stateless Aggregator
+
+For stateless workloads that don't require persistent storage, you can deploy aggregators without persistent volumes:
+
+```yaml
+# Stateless aggregator - no state directory needed
+sources:
+  vector:
+    type: vector
+    address: "0.0.0.0:6000"
+    version: "2"
+
+transforms:
+  parse:
+    type: remap
+    inputs: ["vector"]
+    source: |
+      . = parse_json!(.message)
+
+sinks:
+  forward:
+    type: http
+    inputs: ["parse"]
+    uri: "https://api.example.com/logs"
+    encoding:
+      codec: json
+```
+
+Stateless aggregators are ideal for:
+- Simple transformation and forwarding
+- Kubernetes Deployments that can scale quickly
+- Cost-sensitive environments
+- High-availability setups with load balancing
+
+## Choosing the Right Role
+
+| Factor | Agent | Aggregator |
+|--------|-------|------------|
+| **Deployment** | Per-node (DaemonSet, systemd per host) | Centralized (Deployment, StatefulSet) |
+| **Resource Usage** | Low (100-500MB RAM) | High (1-8GB+ RAM) |
+| **Data Volume** | Local node only | Aggregate from many sources |
+| **Processing** | Light transforms, filtering | Heavy transforms, enrichment, routing |
+| **State** | Minimal local state | May require persistent storage |
+| **Network** | Outbound connections | Inbound + outbound |
+| **Scaling** | Automatic (per-node) | Manual/HPA based on load |
+
+## Best Practices
+
+### For Agents
+
+- Keep configuration simple and focused on collection
+- Use local buffering to handle temporary network issues
+- Implement resource limits to prevent resource exhaustion
+- Use the `kubernetes_logs` source for Kubernetes environments
+- Enable internal metrics for observability
+
+### For Aggregators
+
+- Size appropriately for expected throughput
+- Use persistent storage for stateful operations
+- Implement health checks and readiness probes
+- Configure appropriate buffer sizes
+- Use connection pooling for sinks
+- Monitor queue sizes and backpressure
+- Deploy multiple replicas for high availability
+
+### Security Considerations
+
+- Use TLS for agent-to-aggregator communication
+- Implement authentication between agents and aggregators
+- Restrict network access using firewalls or network policies
+- Run with minimal privileges (see systemd hardened configuration)
+- Regularly update Vector to get security patches

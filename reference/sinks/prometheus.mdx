@@ -1,0 +1,485 @@
+---
+title: Prometheus Exporter Sink
+description: Expose metrics on a Prometheus-compatible endpoint for scraping
+icon: chart-line
+---
+
+The Prometheus Exporter sink exposes metrics on an HTTP endpoint that Prometheus can scrape. It aggregates distribution metrics into histograms or summaries and maintains metric state between scrapes.
+
+## Configuration
+
+```toml
+[sinks.prometheus_exporter]
+type = "prometheus_exporter"
+inputs = ["my_metrics"]
+
+# HTTP server address
+address = "0.0.0.0:9598"
+
+# Optional namespace prefix
+default_namespace = "service"
+
+# Flush expired metrics interval
+flush_period_secs = 60
+```
+
+## Core Parameters
+
+<ParamField path="address" type="string" default="0.0.0.0:9598">
+  The address to expose for scraping. Metrics are exposed at `/metrics`.
+
+  ```toml
+  address = "0.0.0.0:9598"      # Listen on all interfaces
+  address = "127.0.0.1:9598"    # Localhost only
+  address = "192.160.0.10:9598" # Specific interface
+  ```
+</ParamField>
+
+<ParamField path="default_namespace" type="string">
+  Default namespace prefix for metrics that don't have one.
+  
+  The namespace is prepended to metric names with an underscore separator.
+
+  ```toml
+  default_namespace = "service"  # metrics become: service_metric_name
+  default_namespace = "app"      # metrics become: app_metric_name
+  ```
+</ParamField>
+
+<ParamField path="flush_period_secs" type="integer" default="60">
+  Interval in seconds to flush expired metrics.
+  
+  Metrics not seen since the last flush are considered expired and removed. Set this higher than your Prometheus scrape interval.
+
+  ```toml
+  flush_period_secs = 60   # Flush every minute
+  flush_period_secs = 300  # Flush every 5 minutes
+  ```
+</ParamField>
+
+<ParamField path="suppress_timestamp" type="boolean" default="false">
+  Suppress timestamps in Prometheus output.
+  
+  Useful when aggregating metrics over long periods or replaying old metrics.
+
+  ```toml
+  suppress_timestamp = true
+  ```
+</ParamField>
+
+## Distribution Metrics
+
+Vector's distribution metrics must be aggregated into Prometheus-compatible formats:
+
+### Histograms (Default)
+
+<ParamField path="distributions_as_summaries" type="boolean" default="false">
+  When false (default), distributions are aggregated into histograms.
+</ParamField>
+
+<ParamField path="buckets" type="array" default="[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]">
+  Bucket boundaries for aggregating distributions into histograms.
+
+  ```toml
+  # Default buckets (suitable for response times in seconds)
+  buckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+  
+  # Custom buckets for milliseconds
+  buckets = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
+  
+  # Memory usage in MB
+  buckets = [10, 50, 100, 250, 500, 1000, 2500, 5000]
+  ```
+</ParamField>
+
+### Summaries
+
+<ParamField path="distributions_as_summaries" type="boolean" default="false">
+  When true, distributions are aggregated into summaries.
+</ParamField>
+
+<ParamField path="quantiles" type="array" default="[0.5, 0.75, 0.9, 0.95, 0.99]">
+  Quantiles to calculate for aggregating distributions into summaries.
+
+  ```toml
+  distributions_as_summaries = true
+  quantiles = [0.5, 0.75, 0.9, 0.95, 0.99, 0.999]
+  ```
+</ParamField>
+
+```toml
+# Use histograms (default, recommended)
+[sinks.prom]
+type = "prometheus_exporter"
+inputs = ["metrics"]
+buckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+
+# Or use summaries
+[sinks.prom_summary]
+type = "prometheus_exporter"
+inputs = ["metrics"]
+distributions_as_summaries = true
+quantiles = [0.5, 0.9, 0.95, 0.99]
+```
+
+## Authentication
+
+<ParamField path="auth.username" type="string">
+  HTTP Basic authentication username.
+</ParamField>
+
+<ParamField path="auth.password" type="string">
+  HTTP Basic authentication password.
+</ParamField>
+
+```toml
+[sinks.prometheus.auth]
+username = "prometheus"
+password = "${PROM_PASSWORD}"
+```
+
+## TLS Configuration
+
+<ParamField path="tls.enabled" type="boolean" default="false">
+  Enable TLS/SSL for the HTTP endpoint.
+</ParamField>
+
+<ParamField path="tls.crt_file" type="string">
+  Path to TLS certificate file.
+</ParamField>
+
+<ParamField path="tls.key_file" type="string">
+  Path to TLS private key file.
+</ParamField>
+
+```toml
+[sinks.prometheus.tls]
+enabled = true
+crt_file = "/etc/vector/certs/server.crt"
+key_file = "/etc/vector/certs/server.key"
+```
+
+## Metric Types
+
+The Prometheus exporter handles Vector's metric types:
+
+| Vector Type | Prometheus Type | Description |
+|-------------|-----------------|-------------|
+| Counter | Counter | Monotonically increasing value |
+| Gauge | Gauge | Value that can increase or decrease |
+| Distribution | Histogram or Summary | Statistical distribution of values |
+| Set | Gauge | Count of unique values |
+
+## Complete Examples
+
+### Basic Configuration
+
+```toml
+[sinks.prometheus]
+type = "prometheus_exporter"
+inputs = ["host_metrics"]
+
+address = "0.0.0.0:9598"
+default_namespace = "vector"
+```
+
+Then configure Prometheus to scrape:
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'vector'
+    static_configs:
+      - targets: ['localhost:9598']
+```
+
+### With Authentication
+
+```toml
+[sinks.prometheus_secure]
+type = "prometheus_exporter"
+inputs = ["metrics"]
+
+address = "0.0.0.0:9598"
+
+[sinks.prometheus_secure.auth]
+username = "prometheus"
+password = "${PROMETHEUS_PASSWORD}"
+```
+
+Prometheus configuration:
+
+```yaml
+scrape_configs:
+  - job_name: 'vector'
+    static_configs:
+      - targets: ['vector:9598']
+    basic_auth:
+      username: prometheus
+      password: ${PROMETHEUS_PASSWORD}
+```
+
+### With TLS
+
+```toml
+[sinks.prometheus_tls]
+type = "prometheus_exporter"
+inputs = ["metrics"]
+
+address = "0.0.0.0:9598"
+
+[sinks.prometheus_tls.tls]
+enabled = true
+crt_file = "/etc/vector/tls/server.crt"
+key_file = "/etc/vector/tls/server.key"
+```
+
+Prometheus configuration:
+
+```yaml
+scrape_configs:
+  - job_name: 'vector'
+    scheme: https
+    static_configs:
+      - targets: ['vector:9598']
+    tls_config:
+      ca_file: /etc/prometheus/ca.crt
+      insecure_skip_verify: false
+```
+
+### Custom Histogram Buckets
+
+```toml
+[sinks.prometheus_custom]
+type = "prometheus_exporter"
+inputs = ["response_times"]
+
+address = "0.0.0.0:9598"
+default_namespace = "http"
+
+# Buckets optimized for response times in milliseconds
+buckets = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
+```
+
+### Using Summaries
+
+```toml
+[sinks.prometheus_summary]
+type = "prometheus_exporter"
+inputs = ["request_durations"]
+
+address = "0.0.0.0:9598"
+
+# Use summaries instead of histograms
+distributions_as_summaries = true
+quantiles = [0.5, 0.9, 0.95, 0.99, 0.999]
+```
+
+### Multiple Namespaces
+
+```toml
+# API metrics
+[sinks.prom_api]
+type = "prometheus_exporter"
+inputs = ["api_metrics"]
+address = "0.0.0.0:9598"
+default_namespace = "api"
+
+# Database metrics  
+[sinks.prom_db]
+type = "prometheus_exporter"
+inputs = ["db_metrics"]
+address = "0.0.0.0:9599"
+default_namespace = "database"
+```
+
+### High-Cardinality Handling
+
+```toml
+[sinks.prometheus_limited]
+type = "prometheus_exporter"
+inputs = ["filtered_metrics"]
+
+address = "0.0.0.0:9598"
+
+# Flush more frequently to limit memory usage
+flush_period_secs = 30
+
+# Use histograms to bound cardinality
+buckets = [0.1, 0.5, 1.0, 5.0, 10.0]
+```
+
+## Kubernetes Deployment
+
+### Service
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector-metrics
+  labels:
+    app: vector
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9598
+      targetPort: 9598
+      name: metrics
+  selector:
+    app: vector
+```
+
+### ServiceMonitor (Prometheus Operator)
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vector
+  labels:
+    app: vector
+spec:
+  selector:
+    matchLabels:
+      app: vector
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+```
+
+### PodMonitor
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: vector
+spec:
+  selector:
+    matchLabels:
+      app: vector
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+```
+
+## Prometheus Queries
+
+Example PromQL queries for Vector metrics:
+
+```promql
+# Rate of events processed
+rate(vector_events_processed_total[5m])
+
+# P95 processing latency (histogram)
+histogram_quantile(0.95, rate(vector_processing_duration_seconds_bucket[5m]))
+
+# Memory usage by component
+sum by (component) (vector_memory_bytes)
+
+# Error rate
+rate(vector_errors_total[5m])
+
+# Events throughput by sink
+sum by (sink) (rate(vector_sink_events_total[5m]))
+```
+
+## Troubleshooting
+
+### Endpoint Not Accessible
+
+If you can't reach the `/metrics` endpoint:
+
+1. Verify the address binding (use `0.0.0.0` to listen on all interfaces)
+2. Check firewall rules and network policies
+3. Ensure the port is not already in use
+4. Review Vector logs for binding errors
+5. Test with `curl http://localhost:9598/metrics`
+
+### No Metrics Appearing
+
+If `/metrics` is empty:
+
+1. Verify metrics are flowing to the sink (check inputs)
+2. Check metric types are compatible
+3. Ensure metrics have been generated since Vector started
+4. Review Vector logs for errors
+5. Wait for the first scrape interval
+
+### High Memory Usage
+
+For memory issues:
+
+1. Reduce `flush_period_secs` to expire metrics faster
+2. Limit metric cardinality (reduce label combinations)
+3. Use histograms instead of summaries
+4. Filter high-cardinality labels before the exporter
+5. Reduce `buckets` or `quantiles` array size
+
+### Metrics Disappearing
+
+If metrics vanish between scrapes:
+
+1. Increase `flush_period_secs` (must be > scrape interval)
+2. Ensure Prometheus scrape interval aligns with flush period
+3. Check if metrics are being continuously generated
+4. Review Vector logs for errors
+
+## Best Practices
+
+1. **Set flush period > scrape interval** to prevent metric expiration
+2. **Use histograms over summaries** for better aggregation
+3. **Choose appropriate buckets** based on your metric ranges
+4. **Add a default namespace** to avoid name collisions
+5. **Enable authentication** in production environments
+6. **Use TLS** for sensitive metrics
+7. **Limit cardinality** to prevent memory issues
+8. **Monitor the exporter** with Prometheus queries
+9. **Use ServiceMonitor** in Kubernetes with Prometheus Operator
+10. **Document custom metrics** for your team
+
+## Metric Cardinality
+
+High cardinality can cause memory issues. Tips to manage:
+
+1. **Limit label values**: Avoid unbounded labels (user IDs, UUIDs)
+2. **Aggregate before export**: Use transforms to group metrics
+3. **Drop high-cardinality labels**: Remove unnecessary labels
+4. **Use histograms**: Bound distribution metrics
+5. **Increase flush frequency**: Expire metrics sooner
+6. **Sample if needed**: Reduce metric volume
+
+```toml
+# Drop high-cardinality label
+[transforms.reduce_cardinality]
+type = "remap"
+inputs = ["metrics"]
+source = '''
+  del(.tags.user_id)  # Remove unbounded label
+  .tags.endpoint = replace(.tags.endpoint, r'/\d+/', "/id/")  # Normalize IDs
+'''
+
+[sinks.prometheus]
+type = "prometheus_exporter"
+inputs = ["reduce_cardinality"]
+address = "0.0.0.0:9598"
+```
+
+## Performance Considerations
+
+1. **Scrape interval**: Balance freshness with overhead (15-60s typical)
+2. **Flush period**: Set to 2-3x scrape interval
+3. **Histogram buckets**: More buckets = more memory, choose wisely
+4. **Summaries**: More expensive than histograms, use sparingly
+5. **Authentication**: Minimal overhead, enable freely
+6. **TLS**: Small overhead, worth it for security
+
+## See Also
+
+- [Prometheus Documentation](https://prometheus.io/docs/)
+- [Prometheus Metric Types](https://prometheus.io/docs/concepts/metric_types/)
+- [PromQL Queries](https://prometheus.io/docs/prometheus/latest/querying/basics/)
+- [Histogram vs Summary](https://prometheus.io/docs/practices/histograms/)

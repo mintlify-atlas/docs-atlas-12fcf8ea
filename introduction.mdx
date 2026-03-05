@@ -1,0 +1,187 @@
+---
+title: "Introduction"
+description: "Vector is a high-performance observability data pipeline for collecting, transforming, and routing logs, metrics, and traces."
+---
+
+<img
+  className="block"
+  src="https://media.brand.dev/db153b45-c301-4d19-a511-c573ac74c425.svg"
+  alt="Vector Logo"
+  style={{ maxWidth: "200px", marginBottom: "2rem" }}
+/>
+
+# Welcome to Vector
+
+Vector is a high-performance, end-to-end observability data pipeline that puts you in control of your observability data. Built in Rust, Vector enables you to collect, transform, and route all your logs, metrics, and traces to any vendors you want today and any other vendors you may want tomorrow.
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get Vector up and running in minutes
+  </Card>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Install Vector on your platform
+  </Card>
+  <Card
+    title="Configuration"
+    icon="gear"
+    href="/configuration/overview"
+  >
+    Learn how to configure your pipeline
+  </Card>
+  <Card
+    title="Deployment"
+    icon="server"
+    href="/deployment/roles"
+  >
+    Deploy Vector as an agent or aggregator
+  </Card>
+</CardGroup>
+
+## Why Vector?
+
+Vector solves critical observability challenges through its unique combination of performance, reliability, and flexibility.
+
+<CardGroup cols={3}>
+  <Card title="High Performance" icon="gauge-high">
+    Built in Rust for maximum throughput and minimal resource usage. Process millions of events per second.
+  </Card>
+  <Card title="Vendor Neutral" icon="arrows-turn-to-dots">
+    Works with 100+ sources and sinks. Switch vendors without disrupting your workflows.
+  </Card>
+  <Card title="Reliable" icon="shield-check">
+    Memory-safe architecture with end-to-end delivery guarantees. Never lose your data.
+  </Card>
+  <Card title="Unified Platform" icon="layer-group">
+    Handle logs, metrics, and traces in a single pipeline. Simplify your observability stack.
+  </Card>
+  <Card title="Powerful Transforms" icon="wand-magic-sparkles">
+    Use VRL (Vector Remap Language) to parse, filter, and enrich your data on the fly.
+  </Card>
+  <Card title="Production Ready" icon="building">
+    Trusted by Atlassian, T-Mobile, Comcast, Discord, and many more organizations.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<AccordionGroup>
+  <Accordion title="100+ Sources, Transforms, and Sinks">
+    Vector supports a vast ecosystem of integrations including:
+    - **Sources**: file, kafka, syslog, http, docker_logs, journald, prometheus, and more
+    - **Transforms**: remap, filter, aggregate, reduce, log_to_metric, dedupe, and more
+    - **Sinks**: elasticsearch, s3, kafka, datadog, prometheus, clickhouse, and more
+  </Accordion>
+
+  <Accordion title="Vector Remap Language (VRL)">
+    VRL is a purpose-built language for transforming observability data. It's:
+    - **Fast**: Compiled for maximum performance
+    - **Safe**: Fail-safe by default with compile-time error detection
+    - **Ergonomic**: Designed specifically for log and metric manipulation
+  </Accordion>
+
+  <Accordion title="Flexible Deployment">
+    Deploy Vector in multiple roles:
+    - **Agent**: Lightweight data collector running on each host
+    - **Aggregator**: Centralized data processing and routing layer
+    - **Hybrid**: Combine both roles for complex topologies
+  </Accordion>
+
+  <Accordion title="Enterprise-Grade Reliability">
+    Vector provides:
+    - Memory-safe Rust implementation
+    - End-to-end acknowledgments and delivery guarantees
+    - Disk-based buffering for backpressure handling
+    - Built-in health checks and monitoring
+  </Accordion>
+</AccordionGroup>
+
+## Quick Example
+
+Here's a simple Vector configuration that reads logs from a file, parses them, and sends them to Elasticsearch:
+
+```yaml vector.yaml
+sources:
+  my_logs:
+    type: file
+    include:
+      - /var/log/app/*.log
+
+transforms:
+  parse_logs:
+    type: remap
+    inputs:
+      - my_logs
+    source: |
+      . = parse_json!(.message)
+      .timestamp = to_timestamp!(.timestamp)
+
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs:
+      - parse_logs
+    endpoint: "https://elasticsearch.example.com"
+    index: "logs-%Y.%m.%d"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Core Concepts"
+    icon="lightbulb"
+    href="/concepts/data-model"
+  >
+    Understand Vector's architecture and data model
+  </Card>
+  <Card
+    title="Configuration Guide"
+    icon="book"
+    href="/configuration/overview"
+  >
+    Learn how to configure sources, transforms, and sinks
+  </Card>
+  <Card
+    title="VRL Guide"
+    icon="code"
+    href="/guides/vrl-basics"
+  >
+    Master the Vector Remap Language for data transformation
+  </Card>
+  <Card
+    title="API Reference"
+    icon="terminal"
+    href="/reference/api/overview"
+  >
+    Explore Vector's GraphQL API for runtime management
+  </Card>
+</CardGroup>
+
+## Community & Support
+
+Vector is maintained by Datadog's Community Open Source Engineering team with contributions from a vibrant open source community.
+
+<CardGroup cols={2}>
+  <Card
+    title="GitHub"
+    icon="github"
+    href="https://github.com/vectordotdev/vector"
+  >
+    Star us on GitHub and contribute to the project
+  </Card>
+  <Card
+    title="Community Chat"
+    icon="comments"
+    href="https://chat.vector.dev"
+  >
+    Join our Discord community for help and discussions
+  </Card>
+</CardGroup>

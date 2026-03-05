@@ -1,0 +1,497 @@
+---
+title: Upgrading Vector
+description: Safely upgrade Vector to newer versions with zero downtime and rollback procedures
+---
+
+This guide covers how to safely upgrade Vector to newer versions, handle breaking changes, and roll back if necessary.
+
+## Before You Upgrade
+
+### Check the Changelog
+
+Always review the [Vector changelog](https://vector.dev/releases/) before upgrading to understand:
+
+- New features and enhancements
+- Breaking changes
+- Deprecated features
+- Bug fixes
+- Performance improvements
+
+### Verify Version Compatibility
+
+Vector follows semantic versioning:
+
+- **Major versions** (e.g., 1.x → 2.x): May contain breaking changes
+- **Minor versions** (e.g., 0.54.x → 0.55.x): New features, no breaking changes
+- **Patch versions** (e.g., 0.54.0 → 0.54.1): Bug fixes only
+
+### Test in Non-Production First
+
+Always test upgrades in development or staging environments before production:
+
+1. Deploy the new version to staging
+2. Validate your configuration
+3. Monitor metrics and logs
+4. Test all critical data flows
+5. Verify integration with external systems
+
+## Upgrade Strategies
+
+### Rolling Upgrade (Zero Downtime)
+
+For high-availability deployments, perform a rolling upgrade:
+
+1. **Upgrade one instance** at a time
+2. **Verify** it's healthy before proceeding
+3. **Continue** with remaining instances
+4. **Monitor** metrics throughout the process
+
+This approach ensures continuous data processing.
+
+### Blue-Green Deployment
+
+Deploy the new version alongside the old:
+
+1. **Deploy** new version (green) alongside current version (blue)
+2. **Test** green deployment thoroughly
+3. **Switch** traffic from blue to green
+4. **Keep** blue running for quick rollback
+5. **Decommission** blue after confirming green is stable
+
+### Canary Deployment
+
+Gradually roll out to a subset of instances:
+
+1. **Deploy** new version to 10% of instances
+2. **Monitor** for issues
+3. **Expand** to 25%, then 50%, then 100%
+4. **Roll back** immediately if issues arise
+
+## Upgrade Procedures by Platform
+
+### Linux (DEB/RPM)
+
+#### Debian/Ubuntu (APT)
+
+```bash
+# Update package list
+sudo apt update
+
+# Check available version
+apt list -a vector
+
+# Upgrade Vector
+sudo apt upgrade vector
+
+# Restart Vector
+sudo systemctl restart vector
+
+# Verify new version
+vector --version
+```
+
+#### RHEL/CentOS (YUM)
+
+```bash
+# Check available versions
+yum list available vector --showduplicates
+
+# Upgrade to latest
+sudo yum update vector
+
+# Or upgrade to specific version
+sudo yum update vector-0.54.0
+
+# Restart Vector
+sudo systemctl restart vector
+
+# Verify
+vector --version
+```
+
+### Docker
+
+#### Update Container
+
+```bash
+# Pull new version
+docker pull timberio/vector:0.54.0-alpine
+
+# Stop current container
+docker stop vector
+
+# Remove old container (data persists in volumes)
+docker rm vector
+
+# Start new container
+docker run -d \
+  --name vector \
+  -v /var/log:/var/log:ro \
+  -v /etc/vector:/etc/vector:ro \
+  timberio/vector:0.54.0-alpine
+```
+
+#### Docker Compose
+
+```yaml
+# docker-compose.yml
+services:
+  vector:
+    image: timberio/vector:0.54.0-alpine  # Update version here
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+    restart: unless-stopped
+```
+
+```bash
+# Pull new image and recreate containers
+docker-compose pull
+docker-compose up -d
+```
+
+### Kubernetes
+
+#### Using Helm
+
+```bash
+# Update Helm repository
+helm repo update
+
+# Check available versions
+helm search repo vector/vector --versions
+
+# Upgrade Vector
+helm upgrade vector vector/vector \
+  --version 0.54.0 \
+  --namespace vector \
+  --values values.yaml
+
+# Monitor rollout
+kubectl rollout status daemonset/vector -n vector
+```
+
+#### Using Kubectl
+
+```bash
+# Update image in deployment
+kubectl set image daemonset/vector \
+  vector=timberio/vector:0.54.0-alpine \
+  -n vector
+
+# Monitor rollout
+kubectl rollout status daemonset/vector -n vector
+
+# Verify new version
+kubectl exec -n vector daemonset/vector -- vector --version
+```
+
+### Systemd Service
+
+For systemd-managed installations:
+
+```bash
+# Stop Vector gracefully
+sudo systemctl stop vector
+
+# Backup configuration
+sudo cp /etc/vector/vector.yaml /etc/vector/vector.yaml.backup
+
+# Install new version (method depends on your OS)
+# ... (use DEB/RPM/binary installation) ...
+
+# Validate configuration
+vector validate --config /etc/vector/vector.yaml
+
+# Start Vector
+sudo systemctl start vector
+
+# Check status
+sudo systemctl status vector
+
+# Monitor logs
+sudo journalctl -u vector -f
+```
+
+## Configuration Migration
+
+### Handling Breaking Changes
+
+When upgrading across major versions, you may need to update your configuration.
+
+#### Check for Deprecated Features
+
+Run validation to identify deprecated options:
+
+```bash
+vector validate --deny-warnings --config vector.yaml
+```
+
+#### Update Deprecated Syntax
+
+Example migration (hypothetical):
+
+```yaml
+# Old syntax (deprecated)
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    mode: bulk  # Deprecated option
+
+# New syntax
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    bulk:
+      enabled: true  # New nested structure
+```
+
+### Using Config Conversion
+
+Convert configurations between formats:
+
+```bash
+# Convert TOML to YAML
+vector convert-config --input vector.toml --output vector.yaml
+
+# Convert YAML to JSON
+vector convert-config --input vector.yaml --output vector.json
+```
+
+## Graceful Shutdown
+
+Vector supports graceful shutdown to prevent data loss during upgrades.
+
+### Default Behavior
+
+By default, Vector waits 60 seconds for graceful shutdown:
+
+```bash
+# Set custom graceful shutdown timeout
+vector --graceful-shutdown-limit-secs 120
+
+# Never timeout (wait indefinitely)
+vector --no-graceful-shutdown-limit
+
+# Via environment variable
+VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS=120 vector
+```
+
+### What Happens During Graceful Shutdown
+
+1. **Stop accepting new data** from sources
+2. **Flush buffers** to sinks
+3. **Complete in-flight requests** to external services
+4. **Persist state** to disk (if using disk buffers)
+5. **Exit cleanly** once all data is sent
+
+### Monitoring Graceful Shutdown
+
+```bash
+# Watch Vector logs during shutdown
+sudo journalctl -u vector -f
+
+# In Docker
+docker logs -f vector
+```
+
+## Rollback Procedures
+
+If issues arise after upgrading, roll back to the previous version.
+
+### Linux (DEB/RPM)
+
+#### Debian/Ubuntu
+
+```bash
+# List installed versions
+apt list --installed vector
+
+# Install specific older version
+sudo apt install vector=0.53.0-1
+
+# Prevent automatic upgrades
+sudo apt-mark hold vector
+
+# Restart
+sudo systemctl restart vector
+```
+
+#### RHEL/CentOS
+
+```bash
+# Downgrade to previous version
+sudo yum downgrade vector-0.53.0
+
+# Restart
+sudo systemctl restart vector
+```
+
+### Docker
+
+```bash
+# Stop current container
+docker stop vector
+docker rm vector
+
+# Start with previous version
+docker run -d \
+  --name vector \
+  -v /var/log:/var/log:ro \
+  -v /etc/vector:/etc/vector:ro \
+  timberio/vector:0.53.0-alpine  # Previous version
+```
+
+### Kubernetes
+
+```bash
+# Rollback to previous revision
+kubectl rollout undo daemonset/vector -n vector
+
+# Rollback to specific revision
+kubectl rollout undo daemonset/vector --to-revision=2 -n vector
+
+# Check rollback status
+kubectl rollout status daemonset/vector -n vector
+```
+
+### Restore Configuration Backup
+
+If you updated configuration during upgrade:
+
+```bash
+# Restore backup
+sudo cp /etc/vector/vector.yaml.backup /etc/vector/vector.yaml
+
+# Validate
+vector validate --config /etc/vector/vector.yaml
+
+# Restart
+sudo systemctl restart vector
+```
+
+## Post-Upgrade Checklist
+
+After upgrading, verify everything is working:
+
+- [ ] Vector service is running: `systemctl status vector`
+- [ ] No errors in logs: `journalctl -u vector --since "10 minutes ago"`
+- [ ] Configuration is valid: `vector validate --config /etc/vector/vector.yaml`
+- [ ] Metrics are being emitted
+- [ ] Data is flowing to sinks
+- [ ] Health checks are passing
+- [ ] Performance metrics are normal
+- [ ] No increase in error rates
+
+## Upgrade Best Practices
+
+### 1. Always Backup Configuration
+
+Before upgrading:
+
+```bash
+# Backup config
+cp /etc/vector/vector.yaml /etc/vector/vector.yaml.backup.$(date +%Y%m%d)
+
+# Backup data directory (if using disk buffers)
+tar -czf vector-data-backup.tar.gz /var/lib/vector/
+```
+
+### 2. Enable Configuration Watching
+
+Use config watching for zero-downtime config updates:
+
+```bash
+vector --watch-config --config /etc/vector/vector.yaml
+```
+
+```yaml
+# Or in systemd service
+[Service]
+ExecStart=/usr/bin/vector --watch-config --config /etc/vector/vector.yaml
+```
+
+### 3. Monitor During Upgrade
+
+Watch these metrics during upgrades:
+
+- Event throughput (should remain stable)
+- Error rate (should not increase)
+- Memory usage (check for leaks)
+- CPU usage (check for performance regressions)
+
+### 4. Use Health Checks
+
+Ensure health checks are enabled:
+
+```yaml
+healthchecks:
+  enabled: true
+  require_healthy: true
+```
+
+### 5. Document Your Upgrade Process
+
+Maintain a runbook with:
+
+- Upgrade steps specific to your environment
+- Rollback procedures
+- Monitoring checks
+- Contact information for escalation
+
+## Troubleshooting Upgrades
+
+### Configuration Validation Fails
+
+```bash
+# Check for syntax errors
+vector validate --config vector.yaml
+
+# Review changelog for breaking changes
+# Update configuration as needed
+```
+
+### Vector Won't Start After Upgrade
+
+```bash
+# Check logs for errors
+sudo journalctl -u vector -n 100 --no-pager
+
+# Verify file permissions
+ls -la /etc/vector/vector.yaml
+ls -la /var/lib/vector/
+
+# Test configuration
+vector validate --config /etc/vector/vector.yaml
+```
+
+### Performance Degradation
+
+```bash
+# Check resource usage
+top -p $(pgrep vector)
+
+# Review new default settings in changelog
+# Adjust configuration if needed
+```
+
+### Data Loss During Upgrade
+
+- Ensure graceful shutdown completed
+- Check buffer configuration
+- Review sink health check results
+- Consider using disk buffers for critical data
+
+## Getting Help
+
+If you encounter issues during an upgrade:
+
+- Check the [Vector documentation](https://vector.dev/docs/)
+- Review [GitHub issues](https://github.com/vectordotdev/vector/issues)
+- Ask in the [Vector Discord](https://discord.gg/vector)
+- Search [Vector discussions](https://github.com/vectordotdev/vector/discussions)
+
+## Next Steps
+
+- Learn about [Monitoring](/administration/monitoring) Vector
+- Explore [Troubleshooting](/administration/troubleshooting) techniques  
+- Review [Configuration Validation](/administration/validation)

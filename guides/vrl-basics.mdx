@@ -1,0 +1,628 @@
+---
+title: VRL Basics
+description: Learn the fundamentals of Vector Remap Language for data transformation
+---
+
+Vector Remap Language (VRL) is a purpose-built language for transforming observability data. It's designed to be fast, safe, and easy to use for manipulating logs, metrics, and traces.
+
+## What is VRL?
+
+VRL is a domain-specific language that runs within Vector's `remap` transform. Unlike general-purpose scripting languages, VRL is optimized specifically for observability data transformation with:
+
+- **Memory safety**: No null pointer exceptions or buffer overflows
+- **Compile-time guarantees**: Catch errors before runtime
+- **High performance**: Up to 10x faster than alternatives
+- **Ergonomic syntax**: Designed for data manipulation tasks
+
+## Your First VRL Script
+
+Let's start with a simple example that adds a field to an event:
+
+```toml
+[transforms.add_host]
+  type = "remap"
+  inputs = ["my_source"]
+  source = '''
+    .host = "production-server-01"
+  '''
+```
+
+This script adds a `host` field to every event that flows through the transform.
+
+## Working with Event Fields
+
+### Reading Fields
+
+Access event fields using dot notation:
+
+```coffee
+# Read a top-level field
+host = .hostname
+
+# Read nested fields
+user_id = .user.id
+
+# Read array elements
+first_tag = .tags[0]
+```
+
+### Writing Fields
+
+Assign values to create or update fields:
+
+```coffee
+# Set a string field
+.environment = "production"
+
+# Set a number
+.response_time = 150
+
+# Set a boolean
+.is_error = true
+
+# Create nested structures
+.metadata.version = "1.0"
+.metadata.region = "us-east-1"
+
+# Work with arrays
+.tags = ["web", "frontend", "critical"]
+.tags[1] = "backend"  # Modify array element
+```
+
+### Deleting Fields
+
+Remove fields with the `del` function:
+
+```coffee
+# Delete a single field
+del(.password)
+
+# Delete nested field
+del(.user.email)
+
+# Delete multiple fields
+del(.temp_field)
+del(.debug_info)
+```
+
+## Data Types
+
+VRL supports all common data types:
+
+```coffee
+# String
+.message = "Hello, World!"
+
+# Integer
+.count = 42
+
+# Float
+.percentage = 98.6
+
+# Boolean
+.is_active = true
+
+# Null
+.optional_field = null
+
+# Array
+.items = [1, 2, 3, 4, 5]
+
+# Object (map)
+.user = {
+  "name": "Alice",
+  "age": 30,
+  "roles": ["admin", "user"]
+}
+
+# Timestamp
+.created_at = now()
+```
+
+## Type Coercion
+
+<Steps>
+  <Step title="Understand type safety">
+    VRL is strongly typed. When types don't match, you need explicit conversion.
+  </Step>
+  
+  <Step title="Use conversion functions">
+    VRL provides safe conversion functions:
+    
+    ```coffee
+    # Convert to string
+    .user_id = to_string!(.id)
+    
+    # Convert to integer
+    .port = to_int!(.port_string)
+    
+    # Convert to float
+    .score = to_float!(.score_string)
+    
+    # Convert to boolean
+    .enabled = to_bool!(.enabled_string)
+    ```
+  </Step>
+  
+  <Step title="Handle conversion errors">
+    Use fallible functions (without `!`) to handle errors gracefully:
+    
+    ```coffee
+    # Returns null if conversion fails
+    .port, err = to_int(.port_string)
+    if err != null {
+      .port = 8080  # Default value
+    }
+    ```
+  </Step>
+</Steps>
+
+## String Operations
+
+VRL includes powerful string manipulation functions:
+
+### Basic String Functions
+
+```coffee
+# Concatenation
+.full_name = .first_name + " " + .last_name
+
+# Uppercase/Lowercase
+.normalized = upcase(.username)
+.email = downcase(.email_input)
+
+# Trim whitespace
+.clean = strip_whitespace(.message)
+
+# String length
+.message_length = length(.message)
+
+# Substring
+.prefix = slice!(.message, 0, 10)
+
+# Check contains
+if contains(.message, "error") {
+  .severity = "high"
+}
+```
+
+### Advanced String Matching
+
+```coffee
+# Check if string starts with
+if starts_with(.path, "/api") {
+  .api_request = true
+}
+
+# Check if string ends with
+if ends_with(.file, ".log") {
+  .log_file = true
+}
+
+# Replace text
+.sanitized = replace(.message, "password=", "password=[REDACTED]")
+
+# Split string
+.parts = split(.csv_line, ",")
+```
+
+## Parsing and Encoding
+
+### JSON Parsing
+
+```coffee
+# Parse JSON string
+.parsed, err = parse_json(.json_string)
+
+if err == null {
+  .user_name = .parsed.user.name
+  .user_id = .parsed.user.id
+}
+
+# Encode to JSON
+.json_output = encode_json(.structured_data)
+```
+
+### Common Log Format Parsing
+
+```coffee
+# Parse Apache/Nginx common log format
+.parsed = parse_common_log!(.message)
+
+# Access parsed fields
+.client_ip = .parsed.host
+.request_method = .parsed.method
+.request_path = .parsed.path
+.status_code = .parsed.status
+```
+
+### Syslog Parsing
+
+```coffee
+# Parse syslog message
+.syslog = parse_syslog!(.message)
+
+.facility = .syslog.facility
+.severity = .syslog.severity
+.hostname = .syslog.hostname
+.app_name = .syslog.appname
+```
+
+### Regular Expression Parsing
+
+```coffee
+# Extract fields with regex
+.parsed = parse_regex!(
+  .message,
+  r'^(?P<ip>[\d.]+) - (?P<user>[\w]+) \[(?P<timestamp>.+)\] "(?P<method>\w+) (?P<path>.+)" (?P<status>\d+)'
+)
+
+.client_ip = .parsed.ip
+.username = .parsed.user
+.method = .parsed.method
+```
+
+## Conditionals and Control Flow
+
+### If Statements
+
+```coffee
+# Simple if
+if .status >= 500 {
+  .severity = "critical"
+}
+
+# If-else
+if .status >= 500 {
+  .severity = "critical"
+} else if .status >= 400 {
+  .severity = "error"
+} else {
+  .severity = "info"
+}
+
+# Complex conditions
+if .method == "POST" && .path == "/api/login" {
+  .login_attempt = true
+}
+
+if .status >= 500 || contains(.message, "error") {
+  .alert = true
+}
+```
+
+### Handling Missing Fields
+
+```coffee
+# Check if field exists
+if exists(.optional_field) {
+  .has_optional = true
+}
+
+# Provide default value
+.timeout = .timeout ?? 30
+
+# Null coalescing chain
+.value = .primary_value ?? .backup_value ?? .default_value
+```
+
+## Working with Collections
+
+### Arrays
+
+```coffee
+# Create array
+.tags = ["production", "web", "api"]
+
+# Access elements
+.first_tag = .tags[0]
+.last_tag = .tags[-1]
+
+# Array length
+.tag_count = length(.tags)
+
+# Check if array contains value
+if includes(.tags, "production") {
+  .is_prod = true
+}
+
+# Add to array
+.tags = push(.tags, "monitored")
+
+# Remove from array
+.tags = pop(.tags)  # Removes last element
+```
+
+### Objects (Maps)
+
+```coffee
+# Create object
+.metadata = {
+  "region": "us-east-1",
+  "version": "1.0",
+  "tier": "production"
+}
+
+# Access nested fields
+.region = .metadata.region
+
+# Set nested field
+.metadata.updated_at = now()
+
+# Get keys
+.metadata_keys = keys(.metadata)
+
+# Get values
+.metadata_values = values(.metadata)
+```
+
+### Iteration Functions
+
+```coffee
+# Map over array
+.uppercase_tags = map_values(.tags) -> |value| {
+  upcase(value)
+}
+
+# Map over object keys
+.uppercase_keys = map_keys(.metadata, recursive: true) -> |key| {
+  upcase(key)
+}
+
+# Filter array
+.error_logs = filter(.logs) -> |_index, value| {
+  value.level == "error"
+}
+
+# Iterate with for_each
+for_each(.items) -> |index, value| {
+  .processed[index] = value * 2
+}
+```
+
+## Functions
+
+### Common Functions
+
+```coffee
+# Timestamp functions
+.now = now()
+.parsed_time = parse_timestamp!(.timestamp, "%Y-%m-%d %H:%M:%S")
+.formatted = format_timestamp!(.now, "%Y-%m-%d")
+
+# Hashing functions
+.hash = sha256(.sensitive_data)
+.md5_hash = md5(.data)
+
+# UUID generation
+.request_id = uuid_v4()
+
+# IP address functions
+if ip_cidr_contains!("10.0.0.0/8", .client_ip) {
+  .internal_network = true
+}
+
+# URL parsing
+.url = parse_url!(.request_url)
+.domain = .url.host
+.query_params = .url.query
+```
+
+### Custom Function Examples
+
+```coffee
+# Redact sensitive information
+.message = redact!(.message, filters: [r'\b\d{3}-\d{2}-\d{4}\b'])  # SSN pattern
+
+# Encode/decode base64
+.encoded = encode_base64(.data)
+.decoded = decode_base64(.encoded_data)
+
+# Round numbers
+.rounded_value = round(.float_value, precision: 2)
+
+# Get hostname
+.hostname = get_hostname!()
+```
+
+## Error Handling
+
+<Steps>
+  <Step title="Understand fallible vs infallible functions">
+    Functions ending with `!` are infallible - they abort on error. Functions without `!` return errors that you must handle.
+    
+    ```coffee
+    # Infallible - aborts if parsing fails
+    .parsed = parse_json!(.json_string)
+    
+    # Fallible - returns error
+    .parsed, err = parse_json(.json_string)
+    ```
+  </Step>
+  
+  <Step title="Handle errors explicitly">
+    ```coffee
+    .parsed, err = parse_json(.message)
+    
+    if err != null {
+      log("Failed to parse JSON: " + string!(err), level: "warn")
+      .parse_error = true
+    } else {
+      .user_id = .parsed.user.id
+    }
+    ```
+  </Step>
+  
+  <Step title="Use error coalescing">
+    ```coffee
+    # Use ?? to provide fallback
+    .parsed = parse_json(.message) ?? {}
+    
+    # Chain multiple attempts
+    .timestamp = parse_timestamp(.ts, "%Y-%m-%d") ??
+                 parse_timestamp(.ts, "%d/%m/%Y") ??
+                 now()
+    ```
+  </Step>
+</Steps>
+
+## Practical Examples
+
+### Example 1: Parse and Enrich Apache Logs
+
+<Steps>
+  <Step title="Parse the log line">
+    ```coffee
+    # Parse Apache common log format
+    .parsed = parse_common_log!(.message)
+    ```
+  </Step>
+  
+  <Step title="Extract fields">
+    ```coffee
+    .client_ip = .parsed.host
+    .method = .parsed.method
+    .path = .parsed.path
+    .status = .parsed.status
+    .bytes = .parsed.size
+    ```
+  </Step>
+  
+  <Step title="Enrich with metadata">
+    ```coffee
+    # Add severity based on status
+    if .status >= 500 {
+      .severity = "error"
+    } else if .status >= 400 {
+      .severity = "warn"
+    } else {
+      .severity = "info"
+    }
+    
+    # Add environment
+    .environment = "production"
+    
+    # Add processing timestamp
+    .processed_at = now()
+    ```
+  </Step>
+</Steps>
+
+### Example 2: Sanitize Sensitive Data
+
+```coffee
+# Redact credit card numbers
+.message = redact!(.message, filters: [
+  r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b'
+])
+
+# Redact email addresses
+.message = redact!(.message, filters: [
+  r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+])
+
+# Remove sensitive fields
+del(.password)
+del(.api_key)
+del(.secret_token)
+
+# Hash user identifiers
+.user_id_hash = sha256(.user_id)
+del(.user_id)
+```
+
+### Example 3: Aggregate and Transform Metrics
+
+```coffee
+# Convert log to metric
+.tags.host = .hostname
+.tags.service = .service_name
+
+# Extract numeric value
+.value = to_float!(.response_time_ms)
+
+# Add timestamp
+.timestamp = now()
+
+# Set metric name
+.name = "http.request.duration"
+```
+
+### Example 4: Route Events Based on Content
+
+```coffee
+# Tag events for routing
+if contains(.message, "error") || contains(.message, "exception") {
+  .route = "errors"
+} else if contains(.message, "warn") {
+  .route = "warnings"
+} else {
+  .route = "info"
+}
+
+# Add severity level
+if .route == "errors" {
+  .severity = "high"
+  .alert = true
+} else if .route == "warnings" {
+  .severity = "medium"
+} else {
+  .severity = "low"
+}
+```
+
+## Debugging VRL Scripts
+
+### Use the log function
+
+```coffee
+# Log intermediate values
+log("Processing event: " + string!(.id), level: "debug")
+
+# Log entire event
+log(.)
+
+# Log specific field
+log("Status: " + string!(.status))
+```
+
+### Test with vector tap
+
+```bash
+# Watch events flow through transform
+vector tap my_transform --limit 10
+
+# Format output as JSON
+vector tap my_transform --format json
+```
+
+### Use assertions
+
+```coffee
+# Assert field exists
+assert!(exists(.required_field), message: "Missing required field")
+
+# Assert value is valid
+assert!(.status >= 200 && .status < 600, message: "Invalid status code")
+```
+
+## Best Practices
+
+1. **Use infallible functions judiciously**: Only use `!` when you're certain the operation will succeed
+2. **Handle errors explicitly**: Don't ignore errors from fallible functions
+3. **Keep scripts focused**: Break complex transformations into multiple transforms
+4. **Document your VRL**: Add comments explaining complex logic
+5. **Test thoroughly**: Use Vector's built-in testing framework
+6. **Optimize for performance**: Avoid expensive operations in hot paths
+7. **Use early returns**: Exit early when conditions aren't met
+8. **Leverage built-in functions**: They're optimized for performance
+
+## Next Steps
+
+Now that you understand VRL basics, explore these related topics:
+
+- **Enrichment**: Add contextual data using enrichment tables
+- **Performance Tuning**: Optimize VRL scripts for high throughput
+- **Advanced Patterns**: Complex data transformations and routing
+
+VRL is powerful yet approachable. Start with simple transformations and gradually build more sophisticated data pipelines as you become comfortable with the language.

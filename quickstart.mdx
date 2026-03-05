@@ -1,80 +1,210 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get Vector up and running in 5 minutes"
 ---
 
-## Get started in three steps
+Get Vector installed and processing your first events in just a few minutes.
 
-Get your documentation site running locally and make your first customization.
+## Install Vector
 
-### Step 1: Set up your local environment
+<Tabs>
+  <Tab title="Quick Install Script">
+    The fastest way to get started:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSfL https://sh.vector.dev | bash
+    ```
 
-### Step 2: Deploy your changes
+    This script automatically detects your platform and installs the appropriate package.
+  </Tab>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+  <Tab title="Docker">
+    Run Vector in a container:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    ```bash
+    docker pull timberio/vector:latest-alpine
+    docker run -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+      timberio/vector:latest-alpine
+    ```
+  </Tab>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Tab title="Homebrew (macOS)">
+    Install via Homebrew:
 
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+    ```bash
+    brew tap vectordotdev/brew
+    brew install vector
+    ```
+  </Tab>
+</Tabs>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  See the [Installation](/installation) guide for more installation methods including Kubernetes, APT, YUM, and systemd.
 </Note>
+
+## Create Your First Pipeline
+
+Create a file named `vector.yaml` with this basic configuration:
+
+```yaml vector.yaml
+# Data source: Generate demo logs
+sources:
+  demo_logs:
+    type: demo_logs
+    format: syslog
+    interval: 1
+
+# Transform: Parse syslog format
+transforms:
+  parse_logs:
+    type: remap
+    inputs:
+      - demo_logs
+    source: |
+      . = parse_syslog!(string!(.message))
+      .timestamp = now()
+
+# Data destination: Print to console
+sinks:
+  console:
+    type: console
+    inputs:
+      - parse_logs
+    encoding:
+      codec: json
+```
+
+This configuration:
+1. **Generates** demo syslog data every second
+2. **Parses** the syslog format into structured JSON
+3. **Outputs** the results to your console
+
+## Run Vector
+
+Start Vector with your configuration:
+
+```bash
+vector --config vector.yaml
+```
+
+You should see structured log events being printed to your console:
+
+```json
+{
+  "appname": "benefritz",
+  "facility": "local1",
+  "hostname": "some.machine.com",
+  "message": "Hello world",
+  "msgid": "ID31",
+  "severity": "notice",
+  "timestamp": "2024-03-05T10:30:00.000Z"
+}
+```
+
+<Tip>
+  Press `Ctrl+C` to stop Vector.
+</Tip>
+
+## Next Steps
+
+Now that you have Vector running, explore these key features:
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="lightbulb" href="/concepts/data-model">
+    Learn about sources, transforms, and sinks
+  </Card>
+
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Configure Vector for your use case
+  </Card>
+
+  <Card title="VRL Basics" icon="code" href="/guides/vrl-basics">
+    Master the Vector Remap Language
+  </Card>
+
+  <Card title="Deployment" icon="rocket" href="/deployment/roles">
+    Deploy Vector in production
+  </Card>
+</CardGroup>
+
+## Common First Steps
+
+<AccordionGroup>
+  <Accordion title="Collect Real Logs">
+    Replace the `demo_logs` source with a real source like `file`:
+
+    ```yaml
+    sources:
+      app_logs:
+        type: file
+        include:
+          - /var/log/app/*.log
+    ```
+
+    See [Sources](/reference/sources/overview) for all available sources.
+  </Accordion>
+
+  <Accordion title="Send to a Real Destination">
+    Replace the `console` sink with a production destination:
+
+    ```yaml
+    sinks:
+      elasticsearch:
+        type: elasticsearch
+        inputs:
+          - parse_logs
+        endpoint: "https://elasticsearch.example.com"
+        index: "logs-%Y.%m.%d"
+    ```
+
+    See [Sinks](/reference/sinks/overview) for all available sinks.
+  </Accordion>
+
+  <Accordion title="Add Data Enrichment">
+    Enhance your data with additional fields:
+
+    ```yaml
+    transforms:
+      enrich:
+        type: remap
+        inputs:
+          - parse_logs
+        source: |
+          .environment = "production"
+          .datacenter = get_hostname()
+          .app_version = "2.0.1"
+    ```
+
+    Learn more in the [VRL Guide](/guides/vrl-basics).
+  </Accordion>
+
+  <Accordion title="Validate Your Configuration">
+    Check your configuration before deploying:
+
+    ```bash
+    vector validate vector.yaml
+    ```
+
+    See [Validation](/administration/validation) for more testing options.
+  </Accordion>
+</AccordionGroup>
+
+## Getting Help
+
+<CardGroup cols={2}>
+  <Card title="Documentation" icon="book" href="/configuration/overview">
+    Browse the full configuration guide
+  </Card>
+
+  <Card title="Community Chat" icon="comments" href="https://chat.vector.dev">
+    Join our Discord community
+  </Card>
+
+  <Card title="GitHub Issues" icon="github" href="https://github.com/vectordotdev/vector/issues">
+    Report bugs or request features
+  </Card>
+
+  <Card title="Examples" icon="code" href="https://github.com/vectordotdev/vector/tree/master/config/examples">
+    Browse configuration examples
+  </Card>
+</CardGroup>

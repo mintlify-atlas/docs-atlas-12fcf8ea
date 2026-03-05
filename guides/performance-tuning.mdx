@@ -1,0 +1,411 @@
+---
+title: Performance Tuning
+description: Optimize Vector for maximum throughput and efficiency
+---
+
+Vector is designed for high performance, but achieving optimal throughput requires proper configuration and resource allocation. This guide walks you through performance optimization techniques for Vector deployments.
+
+## Understanding Vector's Performance Model
+
+Vector is built in Rust and designed to be memory-safe and highly concurrent. Its performance characteristics are influenced by several key factors:
+
+- **Buffer configuration**: Controls backpressure and memory usage
+- **Concurrency settings**: Determines parallel processing capacity
+- **Resource limits**: CPU, memory, and network constraints
+- **Transform complexity**: VRL scripts and data processing overhead
+
+## Buffer Configuration
+
+Buffers are critical for managing data flow between components. Vector supports both memory and disk buffers.
+
+### Memory Buffers
+
+Memory buffers provide the fastest performance but are limited by available RAM.
+
+```toml
+[sinks.my_sink]
+  type = "elasticsearch"
+  inputs = ["my_transform"]
+  endpoint = "http://localhost:9200"
+  
+  # Memory buffer configuration
+  [sinks.my_sink.buffer]
+    type = "memory"
+    max_events = 500
+    when_full = "drop_newest"
+```
+
+**Buffer sizing guidelines:**
+- Start with `max_events = 500` for low-volume pipelines
+- Increase to `max_events = 10000` for high-throughput scenarios
+- Monitor memory usage and adjust accordingly
+
+### Disk Buffers
+
+Disk buffers provide durability and handle larger data volumes at the cost of some performance.
+
+```toml
+[sinks.my_sink.buffer]
+  type = "disk"
+  max_size = 268435488  # 256 MB
+  when_full = "block"
+```
+
+<Steps>
+  <Step title="Choose the right buffer type">
+    Use memory buffers for speed, disk buffers for durability. For critical data, disk buffers prevent data loss during restarts.
+  </Step>
+  
+  <Step title="Size your buffers appropriately">
+    Calculate buffer size based on your peak throughput multiplied by your acceptable delay window. For example, if you process 1000 events/sec and want a 30-second buffer: `1000 * 30 = 30,000 events`.
+  </Step>
+  
+  <Step title="Configure when_full behavior">
+    - `block`: Applies backpressure (recommended for critical data)
+    - `drop_newest`: Drops new events when full (prevents pipeline blocking)
+    - `overflow`: Allows buffer to grow (use with caution)
+  </Step>
+</Steps>
+
+## Concurrency and Parallelism
+
+Vector's concurrency settings control how many operations execute simultaneously.
+
+### Request Concurrency
+
+For sinks that make HTTP requests, configure the concurrency limit:
+
+```toml
+[sinks.http_output]
+  type = "http"
+  uri = "https://api.example.com/logs"
+  encoding.codec = "json"
+  
+  # Control concurrent requests
+  request.concurrency = 10
+```
+
+### Adaptive Request Concurrency (ARC)
+
+Vector's Adaptive Request Concurrency automatically adjusts concurrency based on downstream performance:
+
+```toml
+[sinks.adaptive_sink]
+  type = "elasticsearch"
+  endpoint = "http://localhost:9200"
+  
+  # Enable adaptive concurrency
+  request.concurrency = "adaptive"
+```
+
+**ARC Benefits:**
+- Automatically scales with downstream capacity
+- Prevents overwhelming slow endpoints
+- Maximizes throughput without manual tuning
+
+## Batch Configuration
+
+Batching reduces overhead by grouping multiple events into single requests.
+
+```toml
+[sinks.batched_sink]
+  type = "aws_s3"
+  bucket = "my-logs"
+  compression = "gzip"
+  
+  # Batch configuration
+  batch.max_events = 1000
+  batch.timeout_secs = 30
+```
+
+<Steps>
+  <Step title="Set appropriate batch sizes">
+    Larger batches improve throughput but increase latency. For real-time processing, use smaller batches (100-500 events). For high-throughput archiving, use larger batches (1000-10000 events).
+  </Step>
+  
+  <Step title="Configure batch timeouts">
+    Set `timeout_secs` to ensure events don't wait too long. A good starting point is 10-30 seconds for most use cases.
+  </Step>
+  
+  <Step title="Enable compression">
+    Use compression (`gzip`, `zstd`) for network-bound sinks to reduce bandwidth usage and improve effective throughput.
+  </Step>
+</Steps>
+
+## Resource Allocation
+
+### CPU Allocation
+
+Vector automatically uses all available CPU cores. For containerized deployments:
+
+```yaml
+# Kubernetes deployment example
+resources:
+  requests:
+    cpu: "1000m"      # 1 CPU core
+    memory: "512Mi"
+  limits:
+    cpu: "4000m"      # 4 CPU cores
+    memory: "2Gi"
+```
+
+### Memory Optimization
+
+Monitor Vector's memory usage and adjust limits:
+
+```toml
+# Set global buffer limits
+[sources.my_source]
+  type = "file"
+  include = ["/var/log/*.log"]
+  
+  # Limit line buffer size
+  max_line_bytes = 102400  # 100 KB
+```
+
+## VRL Performance Optimization
+
+Vector Remap Language (VRL) scripts can impact performance. Follow these best practices:
+
+### Minimize Regex Operations
+
+```coffee
+# Less efficient
+if match(.message, r'error|warning|critical') {
+  .severity = "high"
+}
+
+# More efficient
+if contains(.message, "error") || 
+   contains(.message, "warning") || 
+   contains(.message, "critical") {
+  .severity = "high"
+}
+```
+
+### Use Efficient Parsing Functions
+
+```coffee
+# Prefer built-in parsers
+.parsed = parse_json!(.message)
+
+# Over regex parsing when possible
+# .parsed = parse_regex!(.message, r'complex_pattern')
+```
+
+### Avoid Expensive Operations in Hot Paths
+
+```coffee
+# Cache computed values
+static_value = "constant_result"
+
+# Use early returns
+if !exists(.field) {
+  return
+}
+
+# Process only when necessary
+```
+
+## Monitoring Performance
+
+Track these key metrics to understand Vector's performance:
+
+### Internal Metrics
+
+Enable Vector's internal metrics source:
+
+```toml
+[sources.internal_metrics]
+  type = "internal_metrics"
+  namespace = "vector"
+```
+
+**Key metrics to monitor:**
+- `component_sent_events_total`: Events successfully sent
+- `component_received_events_total`: Events received
+- `buffer_events`: Current buffer size
+- `buffer_byte_size`: Buffer memory usage
+- `component_errors_total`: Error count
+
+### Performance Benchmarking
+
+<Steps>
+  <Step title="Establish baseline">
+    Measure throughput with minimal configuration:
+    
+    ```bash
+    vector test tests/behavior/throughput/baseline.toml
+    ```
+  </Step>
+  
+  <Step title="Test with realistic load">
+    Generate test data matching your production patterns:
+    
+    ```toml
+    [sources.generator]
+      type = "demo_logs"
+      format = "apache_common"
+      count = 1000000
+    ```
+  </Step>
+  
+  <Step title="Measure and iterate">
+    Use Vector's built-in tap functionality to observe data flow:
+    
+    ```bash
+    vector tap my_transform --limit 100
+    ```
+  </Step>
+</Steps>
+
+## Advanced Optimization Techniques
+
+### Component Ordering
+
+Order transforms to minimize processing:
+
+```toml
+# 1. Filter first (reduce data volume)
+[transforms.filter_errors]
+  type = "filter"
+  inputs = ["my_source"]
+  condition = '.level == "error"'
+
+# 2. Then parse (fewer events to process)
+[transforms.parse]
+  type = "remap"
+  inputs = ["filter_errors"]
+  source = '''
+    .parsed = parse_json!(.message)
+  '''
+
+# 3. Finally enrich (only necessary events)
+[transforms.enrich]
+  type = "remap"
+  inputs = ["parse"]
+  source = '''
+    .environment = "production"
+  '''
+```
+
+### Network Optimization
+
+```toml
+[sinks.optimized_http]
+  type = "http"
+  uri = "https://api.example.com/logs"
+  
+  # Enable HTTP/2
+  request.version = "2"
+  
+  # Adjust timeout settings
+  request.timeout_secs = 60
+  
+  # Enable keep-alive
+  request.tcp_keepalive.enable = true
+```
+
+### Multi-Instance Deployment
+
+For extreme throughput, deploy multiple Vector instances:
+
+```yaml
+# Load balancer configuration
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector-aggregator
+spec:
+  type: LoadBalancer
+  selector:
+    app: vector
+  ports:
+    - port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vector-aggregator
+spec:
+  replicas: 3  # Multiple instances for horizontal scaling
+  selector:
+    matchLabels:
+      app: vector
+  template:
+    metadata:
+      labels:
+        app: vector
+    spec:
+      containers:
+      - name: vector
+        image: timberio/vector:latest
+        resources:
+          requests:
+            cpu: 2000m
+            memory: 2Gi
+```
+
+## Troubleshooting Performance Issues
+
+### High Memory Usage
+
+<Steps>
+  <Step title="Check buffer sizes">
+    Reduce `max_events` or `max_size` in buffer configurations.
+  </Step>
+  
+  <Step title="Review VRL scripts">
+    Look for operations that create large temporary objects.
+  </Step>
+  
+  <Step title="Enable memory profiling">
+    Use Vector's internal metrics to identify memory-intensive components.
+  </Step>
+</Steps>
+
+### Low Throughput
+
+<Steps>
+  <Step title="Increase concurrency">
+    Raise `request.concurrency` for sinks or enable adaptive concurrency.
+  </Step>
+  
+  <Step title="Optimize batch sizes">
+    Increase `batch.max_events` to reduce per-request overhead.
+  </Step>
+  
+  <Step title="Profile VRL transforms">
+    Identify slow transforms and optimize or simplify VRL scripts.
+  </Step>
+</Steps>
+
+### High CPU Usage
+
+<Steps>
+  <Step title="Reduce transform complexity">
+    Simplify VRL scripts and avoid expensive regex operations.
+  </Step>
+  
+  <Step title="Adjust concurrency">
+    High concurrency may cause CPU contention. Try reducing it.
+  </Step>
+  
+  <Step title="Distribute load">
+    Deploy multiple Vector instances to spread CPU load.
+  </Step>
+</Steps>
+
+## Best Practices Summary
+
+1. **Start simple**: Begin with default configurations and optimize based on metrics
+2. **Monitor continuously**: Track throughput, latency, and error rates
+3. **Test thoroughly**: Benchmark changes before deploying to production
+4. **Scale horizontally**: Use multiple instances for extreme throughput requirements
+5. **Optimize VRL**: Keep transforms simple and efficient
+6. **Right-size buffers**: Balance memory usage with data durability needs
+7. **Enable compression**: Reduce network overhead for remote sinks
+8. **Use adaptive concurrency**: Let Vector automatically optimize request rates
+
+By following these guidelines, you can achieve optimal performance for your Vector deployment, handling high-volume observability data efficiently and reliably.

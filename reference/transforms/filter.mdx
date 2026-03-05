@@ -1,0 +1,433 @@
+---
+title: Filter Transform
+description: Filter events based on conditions
+---
+
+## Overview
+
+The `filter` transform filters events based on a set of conditions. Events that match the condition are forwarded to the next component. Events that don't match are dropped.
+
+This is one of the simplest and most commonly used transforms in Vector, ideal for:
+
+- Dropping unwanted log lines
+- Sampling events
+- Routing specific event types
+- Reducing data volume
+
+**Key Features:**
+
+- High performance (function transform)
+- Supports all event types (logs, metrics, traces)
+- VRL-based conditions
+- Built-in metrics for dropped events
+
+## Configuration
+
+<ParamField path="condition" type="condition" required>
+  The condition that every input event is matched against.
+  
+  If an event matches the condition, it is forwarded. Otherwise, the event is dropped.
+  
+  Conditions can be specified using VRL expressions or structured condition types.
+  
+  ```toml
+  condition = '.level == "error"'
+  ```
+</ParamField>
+
+## Inputs
+
+<ParamField path="inputs" type="array" required>
+  List of upstream component IDs.
+  
+  ```toml
+  inputs = ["my_source", "parse_logs"]
+  ```
+</ParamField>
+
+## Outputs
+
+The filter transform has a single default output that emits only events that match the condition.
+
+Dropped events are counted in the `filter_events_dropped_total` internal metric.
+
+## Examples
+
+### Filter by Log Level
+
+```toml
+[transforms.errors_only]
+type = "filter"
+inputs = ["logs"]
+condition = '.level == "error"'
+```
+
+### Filter by Field Existence
+
+```toml
+[transforms.has_user_id]
+type = "filter"
+inputs = ["events"]
+condition = 'exists(.user_id)'
+```
+
+### Filter with Multiple Conditions
+
+```toml
+[transforms.important_events]
+type = "filter"
+inputs = ["logs"]
+# Keep errors OR events from production
+condition = '.level == "error" || .environment == "production"'
+```
+
+### Filter by Message Content
+
+```toml
+[transforms.exclude_healthchecks]
+type = "filter"
+inputs = ["access_logs"]
+# Drop health check requests
+condition = '!contains(.message, "/health")'
+```
+
+### Filter Metrics by Tag
+
+```toml
+[transforms.production_metrics]
+type = "filter"
+inputs = ["metrics"]
+condition = '.tags.environment == "production"'
+```
+
+### Regex-based Filtering
+
+```toml
+[transforms.filter_errors]
+type = "filter"
+inputs = ["logs"]
+# Keep logs matching error patterns
+condition = 'match(.message, r"(?i)(error|exception|fatal|fail)")'
+```
+
+### Numeric Comparisons
+
+```toml
+[transforms.slow_requests]
+type = "filter"
+inputs = ["requests"]
+# Keep requests slower than 1 second
+condition = '.duration > 1000'
+```
+
+### Complex VRL Conditions
+
+```toml
+[transforms.critical_events]
+type = "filter"
+inputs = ["logs"]
+condition = '''
+  .level == "error" &&
+  .service == "payment-api" &&
+  (.status_code >= 500 || exists(.exception))
+'''
+```
+
+### Filter by Timestamp
+
+```toml
+[transforms.recent_events]
+type = "filter"
+inputs = ["logs"]
+condition = '''
+  # Keep events from the last hour
+  now() - .timestamp < duration("1h")
+'''
+```
+
+### Sampling with Filter
+
+```toml
+[transforms.sample_10_percent]
+type = "filter"
+inputs = ["high_volume_logs"]
+condition = 'random_int(0, 100) < 10'
+```
+
+### Type-based Filtering
+
+```toml
+[transforms.logs_only]
+type = "filter"
+inputs = ["mixed_events"]
+# Use the is_log condition type
+condition.type = "is_log"
+```
+
+### Structured Condition Types
+
+Vector supports structured condition configuration:
+
+```toml
+[transforms.filter_by_type]
+type = "filter"
+inputs = ["events"]
+
+[transforms.filter_by_type.condition]
+type = "vrl"
+source = '.severity == "critical"'
+```
+
+### Negating Conditions
+
+```toml
+[transforms.exclude_debug]
+type = "filter"
+inputs = ["logs"]
+# Keep everything except debug logs
+condition = '.level != "debug"'
+```
+
+### Multiple Field Checks
+
+```toml
+[transforms.valid_events]
+type = "filter"
+inputs = ["events"]
+condition = '''
+  exists(.timestamp) &&
+  exists(.message) &&
+  exists(.level) &&
+  .level != null
+'''
+```
+
+## Condition Syntax
+
+The `condition` field accepts VRL expressions that return a boolean value:
+
+### Comparison Operators
+
+- `==` - Equal to
+- `!=` - Not equal to
+- `>` - Greater than
+- `<` - Less than
+- `>=` - Greater than or equal
+- `<=` - Less than or equal
+
+### Logical Operators
+
+- `&&` - Logical AND
+- `||` - Logical OR
+- `!` - Logical NOT
+
+### Common Functions
+
+- `contains(field, substring)` - Check if string contains substring
+- `match(field, regex)` - Match against regex pattern
+- `exists(field)` - Check if field exists
+- `starts_with(field, prefix)` - Check if string starts with prefix
+- `ends_with(field, suffix)` - Check if string ends with suffix
+- `is_nullish(field)` - Check if field is null or doesn't exist
+
+[View all VRL functions →](https://vector.dev/docs/reference/vrl/functions)
+
+## Use Cases
+
+### Security Event Filtering
+
+```toml
+[transforms.security_events]
+type = "filter"
+inputs = ["all_logs"]
+condition = '''
+  .event_type == "security" ||
+  contains(.message, "unauthorized") ||
+  contains(.message, "authentication failed") ||
+  .status_code == 401 ||
+  .status_code == 403
+'''
+```
+
+### Cost Optimization
+
+```toml
+# Drop verbose debug logs to reduce costs
+[transforms.reduce_volume]
+type = "filter"
+inputs = ["application_logs"]
+condition = '''
+  .level != "debug" &&
+  .level != "trace"
+'''
+```
+
+### Multi-tenant Filtering
+
+```toml
+[transforms.tenant_a]
+type = "filter"
+inputs = ["shared_logs"]
+condition = '.tenant_id == "tenant-a"'
+
+[sinks.tenant_a_storage]
+type = "elasticsearch"
+inputs = ["tenant_a"]
+endpoint = "https://tenant-a.example.com"
+```
+
+### Data Quality
+
+```toml
+[transforms.valid_metrics]
+type = "filter"
+inputs = ["metrics"]
+condition = '''
+  # Ensure metric has required fields
+  exists(.name) &&
+  exists(.value) &&
+  .value != null &&
+  is_number(.value)
+'''
+```
+
+## Performance Considerations
+
+### Efficiency
+
+The filter transform is a **function transform**, meaning it processes events synchronously with minimal overhead. It's one of the fastest transforms in Vector.
+
+### Placement in Pipeline
+
+For optimal performance, place filters early in your pipeline to reduce the number of events processed by downstream components:
+
+```toml
+# Good: Filter early
+[sources.logs]
+type = "file"
+
+[transforms.drop_debug]  # Filter first
+type = "filter"
+inputs = ["logs"]
+condition = '.level != "debug"'
+
+[transforms.parse]  # Then parse remaining logs
+type = "remap"
+inputs = ["drop_debug"]
+source = '. = parse_json!(.message)'
+```
+
+### Condition Complexity
+
+Simple conditions are faster than complex ones:
+
+```toml
+# Fast: Simple comparison
+condition = '.level == "error"'
+
+# Slower: Regex matching
+condition = 'match(.message, r"complex|regex|pattern")'
+
+# Slowest: Multiple regex matches
+condition = 'match(.field1, r"...") && match(.field2, r"...")'
+```
+
+## Metrics
+
+The filter transform emits the following internal metrics:
+
+- `component_received_events_total` - Total events received
+- `component_sent_events_total` - Total events forwarded (matched condition)
+- `filter_events_dropped_total` - Total events dropped (didn't match)
+
+Monitor these metrics to understand filtering behavior:
+
+```toml
+[sinks.internal_metrics]
+type = "prometheus_exporter"
+inputs = ["internal_metrics"]
+address = "0.0.0.0:9598"
+```
+
+## Alternatives
+
+### Using Remap for Filtering
+
+For more complex logic, consider using `remap` with conditional `abort`:
+
+```toml
+[transforms.complex_filter]
+type = "remap"
+inputs = ["logs"]
+drop_on_abort = true
+source = '''
+  # Custom filtering logic
+  if .level == "debug" && !contains(.message, "important") {
+    abort
+  }
+  
+  # Additional processing
+  .processed = true
+'''
+```
+
+### Using Route for Multiple Outputs
+
+If you need to send events to different destinations based on conditions, use the `route` transform instead:
+
+```toml
+[transforms.route_by_level]
+type = "route"
+inputs = ["logs"]
+
+[transforms.route_by_level.route]
+errors = '.level == "error"'
+warnings = '.level == "warn"'
+info = '.level == "info"'
+```
+
+## Troubleshooting
+
+### No Events Passing Through
+
+If no events are being forwarded:
+
+1. Check that the condition syntax is valid VRL
+2. Test the condition with sample data using `vector vrl`
+3. Temporarily simplify the condition to isolate the issue
+4. Check that field names match exactly (case-sensitive)
+
+```bash
+# Test condition with sample event
+echo '{"level":"error"}' | vector vrl '.level == "error"'
+```
+
+### All Events Passing Through
+
+If all events pass through (none are filtered):
+
+1. Verify the condition returns `false` for events you want to drop
+2. Check for typos in field names
+3. Ensure field values match expected types and formats
+
+### Unexpected Drops
+
+If events are being dropped unexpectedly:
+
+1. Check metrics: `filter_events_dropped_total`
+2. Log the condition evaluation:
+
+```toml
+condition = '''
+  result = .level == "error"
+  log("Condition result: " + to_string(result), level: "info")
+  result
+'''
+```
+
+## See Also
+
+- [Remap Transform](/reference/transforms/remap) - More powerful data transformation
+- [Route Transform](https://vector.dev/docs/reference/configuration/transforms/route) - Send events to multiple outputs
+- [VRL Conditions](https://vector.dev/docs/reference/vrl) - VRL language reference
+- [Conditions Reference](https://vector.dev/docs/reference/configuration/conditions) - Condition types

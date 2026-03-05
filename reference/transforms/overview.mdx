@@ -1,0 +1,180 @@
+---
+title: Transforms Overview
+description: Transform observability data as it passes through your Vector pipeline
+---
+
+## What are Transforms?
+
+Transforms are the processing components in Vector that modify, filter, route, or aggregate your observability data as it flows through your pipeline. They sit between sources and sinks, allowing you to manipulate events before they reach their destination.
+
+## Available Transforms
+
+Vector provides a comprehensive set of transforms for processing logs, metrics, and traces:
+
+### Data Manipulation
+
+#### Remap
+
+The most powerful and flexible transform in Vector. Use VRL (Vector Remap Language) to modify events with a full-featured scripting language.
+
+- **Type**: Function Transform
+- **Input**: All event types (logs, metrics, traces)
+- **Use cases**: Parsing, enrichment, field manipulation, type conversion
+
+[View remap documentation →](/reference/transforms/remap)
+
+### Filtering & Routing
+
+#### Filter
+
+Filter events based on conditions. Only events matching the condition are forwarded downstream.
+
+- **Type**: Function Transform  
+- **Input**: All event types
+- **Use cases**: Dropping unwanted events, sampling, conditional routing
+
+[View filter documentation →](/reference/transforms/filter)
+
+### Aggregation
+
+#### Aggregate
+
+Aggregate metrics over time windows. Supports multiple aggregation modes including sum, count, mean, min, max, and standard deviation.
+
+- **Type**: Task Transform
+- **Input**: Metrics only
+- **Use cases**: Downsampling metrics, computing statistics, reducing metric cardinality
+
+[View aggregate documentation →](/reference/transforms/aggregate)
+
+#### Reduce
+
+Collapse multiple log events into a single event based on grouping and merge strategies. Ideal for combining related logs into transactions.
+
+- **Type**: Task Transform
+- **Input**: Logs only
+- **Use cases**: Combining multi-line logs, transaction aggregation, event correlation
+
+[View reduce documentation →](/reference/transforms/reduce)
+
+### Additional Transforms
+
+Vector includes many other transforms for specific use cases:
+
+- **dedupe**: Remove duplicate events
+- **route**: Route events to named outputs based on conditions
+- **exclusive_route**: Route events to exactly one output
+- **sample**: Sample a percentage of events
+- **throttle**: Rate limit event throughput
+- **log_to_metric**: Convert log events to metrics
+- **metric_to_log**: Convert metrics to log events
+- **lua**: Transform events using Lua scripts
+- **aws_ec2_metadata**: Enrich with EC2 metadata
+- **tag_cardinality_limit**: Limit metric tag cardinality
+
+## Transform Types
+
+Vector implements two types of transforms:
+
+### Function Transforms
+
+Synchronous transforms that process events one at a time. These are the fastest and most efficient.
+
+**Examples**: `remap`, `filter`
+
+### Task Transforms
+
+Asynchronous transforms that may buffer events, aggregate over time windows, or perform stateful operations.
+
+**Examples**: `aggregate`, `reduce`, `throttle`
+
+## Configuration
+
+All transforms are configured in the Vector configuration file with this basic structure:
+
+```toml
+[transforms.my_transform]
+type = "remap"  # Transform type
+inputs = ["my_source"]  # Input component IDs
+
+# Transform-specific configuration
+source = '''
+  .new_field = "value"
+  .parsed = parse_json!(.message)
+'''
+```
+
+## Ordering and Chaining
+
+Transforms can be chained together to build complex processing pipelines:
+
+```toml
+[sources.logs]
+type = "file"
+includes = ["/var/log/*.log"]
+
+[transforms.parse]
+type = "remap"
+inputs = ["logs"]
+source = '''
+  . = parse_json!(.message)
+'''
+
+[transforms.filter_errors]
+type = "filter"
+inputs = ["parse"]
+condition = '.level == "error"'
+
+[sinks.destination]
+type = "elasticsearch"
+inputs = ["filter_errors"]
+```
+
+## Best Practices
+
+### Use Remap for Most Tasks
+
+The `remap` transform with VRL is the recommended approach for most data manipulation tasks. It's:
+
+- **Fast**: Compiled and optimized
+- **Safe**: Type-checked and guaranteed not to panic
+- **Powerful**: Rich standard library of functions
+- **Testable**: Easy to test and debug
+
+### Enable Concurrency
+
+Most transforms support concurrent execution. Vector automatically enables this for transforms that support it.
+
+### Monitor Performance
+
+Transforms emit internal metrics to help you monitor their performance:
+
+- `component_received_events_total`: Events received
+- `component_sent_events_total`: Events sent
+- `component_errors_total`: Errors encountered
+- Transform-specific metrics (e.g., `aggregate_events_recorded_total`)
+
+### Handle Errors Gracefully
+
+For the `remap` transform, use:
+
+- `drop_on_error`: Drop events that encounter errors
+- `drop_on_abort`: Drop events that are explicitly aborted
+- `reroute_dropped`: Route dropped events to a named output for debugging
+
+## Schema Definitions
+
+Transforms maintain schema information as events flow through the pipeline. This enables:
+
+- Type checking and validation
+- Better error messages
+- Optimization opportunities
+
+The schema is automatically inferred and updated as transforms modify events.
+
+## See Also
+
+- [VRL Reference](https://vector.dev/docs/reference/vrl) - Vector Remap Language documentation
+- [Conditions](https://vector.dev/docs/reference/configuration/conditions) - Condition syntax used by filter and route
+- [Sources](/reference/sources/overview) - Data ingestion components
+- [Sinks](/reference/sinks/overview) - Data destination components

@@ -1,0 +1,253 @@
+---
+title: Sources
+description: Configure data ingestion sources in Vector
+---
+
+Sources are the entry points for data in Vector. They collect events from various sources like files, network sockets, APIs, and more.
+
+## Source Configuration
+
+Sources are configured in the `sources` section of your configuration file:
+
+```yaml
+sources:
+  <source_id>:
+    type: <source_type>
+    # Source-specific options
+```
+
+### Common Source Parameters
+
+All sources support these base configuration options:
+
+<ParamField path="type" type="string" required>
+  The type of the source component. Determines which source implementation to use.
+</ParamField>
+
+<ParamField path="proxy" type="object">
+  Proxy configuration for sources that make HTTP requests.
+  
+  ```yaml
+  proxy:
+    http: "http://proxy.example.com:3128"
+    https: "http://proxy.example.com:3128"
+    no_proxy: ["localhost", "127.0.0.1"]
+  ```
+</ParamField>
+
+## File Source
+
+Read events from files using glob patterns:
+
+```yaml
+sources:
+  apache_logs:
+    type: file
+    include: ["/var/log/apache2/*.log"]
+    exclude: ["/var/log/apache2/*debug.log"]
+    ignore_older: 86400  # 1 day in seconds
+    read_from: beginning
+```
+
+<ParamField path="include" type="array" required>
+  Array of file path glob patterns to read from. Supports standard glob syntax.
+</ParamField>
+
+<ParamField path="exclude" type="array">
+  Array of file path glob patterns to exclude from reading.
+</ParamField>
+
+<ParamField path="ignore_older" type="integer">
+  Ignore files that haven't been modified within this many seconds.
+</ParamField>
+
+<ParamField path="read_from" type="string" default="end">
+  Where to start reading from: `beginning` or `end` of files.
+</ParamField>
+
+## Stdin Source
+
+Read events from standard input:
+
+```yaml
+sources:
+  stdin:
+    type: stdin
+    max_length: 102400  # 100 KB
+```
+
+<ParamField path="max_length" type="integer" default="102400">
+  Maximum byte size of a single event. Events exceeding this will be truncated.
+</ParamField>
+
+## Demo Logs Source
+
+Generate demo log events for testing:
+
+```yaml
+sources:
+  demo:
+    type: demo_logs
+    format: syslog
+    interval: 1
+    count: 100
+```
+
+<ParamField path="format" type="string" required>
+  Format of generated logs: `syslog`, `json`, `apache_common`, or `apache_error`.
+</ParamField>
+
+<ParamField path="interval" type="float" default="1.0">
+  Number of seconds between generating events.
+</ParamField>
+
+<ParamField path="count" type="integer">
+  Number of events to generate before stopping. Omit for infinite generation.
+</ParamField>
+
+## HTTP Source
+
+Receive events via HTTP:
+
+```yaml
+sources:
+  http_endpoint:
+    type: http_server
+    address: "0.0.0.0:8080"
+    encoding: json
+    path: "/events"
+```
+
+<ParamField path="address" type="string" required>
+  The socket address to listen on for connections.
+</ParamField>
+
+<ParamField path="encoding" type="string" required>
+  Expected encoding of received data: `json`, `text`, or `ndjson`.
+</ParamField>
+
+<ParamField path="path" type="string" default="/">
+  HTTP path to accept events on.
+</ParamField>
+
+## Syslog Source
+
+Receive syslog messages over TCP or UDP:
+
+```yaml
+sources:
+  syslog_server:
+    type: syslog
+    mode: tcp
+    address: "0.0.0.0:514"
+```
+
+<ParamField path="mode" type="string" required>
+  Transport protocol: `tcp`, `udp`, or `unix`.
+</ParamField>
+
+<ParamField path="address" type="string" required>
+  The socket address or Unix socket path to listen on.
+</ParamField>
+
+## Socket Source
+
+Receive events over TCP, UDP, or Unix sockets:
+
+```yaml
+sources:
+  socket_listener:
+    type: socket
+    mode: tcp
+    address: "0.0.0.0:9000"
+    max_length: 102400
+```
+
+<ParamField path="mode" type="string" required>
+  Transport protocol: `tcp`, `udp`, or `unix`.
+</ParamField>
+
+<ParamField path="address" type="string" required>
+  The socket address or Unix socket path to listen on.
+</ParamField>
+
+## Prometheus Scrape Source
+
+Scrape Prometheus metrics from endpoints:
+
+```yaml
+sources:
+  prometheus_metrics:
+    type: prometheus_scrape
+    endpoints:
+      - "http://localhost:9090/metrics"
+    scrape_interval_secs: 15
+```
+
+<ParamField path="endpoints" type="array" required>
+  Array of HTTP endpoints to scrape metrics from.
+</ParamField>
+
+<ParamField path="scrape_interval_secs" type="integer" default="15">
+  Interval in seconds between scrapes.
+</ParamField>
+
+## Multiple Sources Example
+
+Combine multiple sources in a single configuration:
+
+```yaml
+sources:
+  # Application logs from files
+  app_logs:
+    type: file
+    include: ["/var/log/app/*.log"]
+    ignore_older: 86400
+  
+  # Syslog messages from network
+  syslog:
+    type: syslog
+    mode: tcp
+    address: "0.0.0.0:514"
+  
+  # Metrics from Prometheus endpoints
+  app_metrics:
+    type: prometheus_scrape
+    endpoints:
+      - "http://localhost:9090/metrics"
+      - "http://localhost:9091/metrics"
+    scrape_interval_secs: 30
+
+transforms:
+  # Process all logs together
+  enrich_logs:
+    type: remap
+    inputs: [app_logs, syslog]
+    source: |
+      .environment = "production"
+
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs: [enrich_logs]
+    endpoint: "http://localhost:9200"
+```
+
+## Source Acknowledgements
+
+Sources can optionally wait for acknowledgements from sinks before marking data as successfully processed:
+
+```yaml
+sources:
+  important_logs:
+    type: file
+    include: ["/var/log/critical/*.log"]
+    acknowledgements:
+      enabled: true
+```
+
+## Next Steps
+
+- [Transforms](/configuration/transforms) - Process data from sources
+- [Sinks](/configuration/sinks) - Send processed data to destinations
+- [Testing](/configuration/testing) - Test your source configurations

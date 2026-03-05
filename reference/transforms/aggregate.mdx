@@ -1,0 +1,544 @@
+---
+title: Aggregate Transform
+description: Aggregate metrics over time windows
+---
+
+## Overview
+
+The `aggregate` transform aggregates metrics passing through a Vector topology. It combines metrics with the same series data (name, namespace, tags) over a configurable time interval and applies aggregation functions.
+
+This transform is essential for:
+
+- Downsampling high-frequency metrics
+- Reducing metric cardinality
+- Computing statistics (mean, max, min, stdev)
+- Cost optimization by reducing data volume
+- Pre-aggregation before sending to destinations
+
+**Key Features:**
+
+- Multiple aggregation modes (sum, count, mean, max, min, stdev, diff)
+- Configurable flush intervals
+- Automatic handling of incremental vs. absolute metrics
+- Task transform for stateful aggregation
+
+## Configuration
+
+<ParamField path="interval_ms" type="integer" default="10000">
+  The interval between flushes, in milliseconds.
+  
+  During this time frame, metrics with the same series data (name, namespace, tags) are aggregated.
+  
+  ```toml
+  interval_ms = 30000  # 30 seconds
+  ```
+</ParamField>
+
+<ParamField path="mode" type="enum" default="auto">
+  Function to use for aggregation.
+  
+  Different modes work with incremental metrics, absolute metrics, or both.
+  
+  **Available modes:**
+  
+  - `auto` - Default. Sums incremental metrics and uses latest value for absolute metrics
+  - `sum` - Sums incremental metrics, ignores absolute
+  - `latest` - Returns latest value for absolute metrics, ignores incremental
+  - `count` - Counts all metrics (incremental and absolute)
+  - `diff` - Returns difference between latest and previous value for absolute, ignores incremental
+  - `max` - Max value of absolute metrics, ignores incremental
+  - `min` - Min value of absolute metrics, ignores incremental
+  - `mean` - Mean value of absolute metrics, ignores incremental
+  - `stdev` - Standard deviation of absolute metrics, ignores incremental
+  
+  ```toml
+  mode = "sum"
+  ```
+</ParamField>
+
+## Inputs
+
+<ParamField path="inputs" type="array" required>
+  List of upstream component IDs.
+  
+  The aggregate transform only accepts metric events. Log and trace events are ignored.
+  
+  ```toml
+  inputs = ["my_source", "metric_transform"]
+  ```
+</ParamField>
+
+## Outputs
+
+The aggregate transform has a single output that emits aggregated metrics at each flush interval.
+
+Each output metric contains:
+- Original metric series (name, namespace, tags)
+- Aggregated value based on the selected mode
+- Updated timestamp reflecting the aggregation time
+
+## Aggregation Modes
+
+### Auto Mode (Default)
+
+The most commonly used mode. Intelligently handles both metric types:
+
+- **Incremental metrics**: Values are summed
+- **Absolute metrics**: Latest value is kept
+
+```toml
+[transforms.aggregate_metrics]
+type = "aggregate"
+inputs = ["metrics"]
+interval_ms = 10000
+mode = "auto"
+```
+
+**Example:**
+```
+Input:  counter{name="requests"} = 10 (incremental)
+        counter{name="requests"} = 5 (incremental)
+Output: counter{name="requests"} = 15 (sum)
+
+Input:  gauge{name="temperature"} = 20.5 (absolute)
+        gauge{name="temperature"} = 21.3 (absolute)
+Output: gauge{name="temperature"} = 21.3 (latest)
+```
+
+### Sum Mode
+
+Sums values of incremental metrics. Ignores absolute metrics.
+
+```toml
+mode = "sum"
+```
+
+Use for:
+- Downsampling counters
+- Aggregating request counts
+- Combining incremental measurements
+
+### Latest Mode
+
+Keeps the most recent value for absolute metrics. Ignores incremental metrics.
+
+```toml
+mode = "latest"
+```
+
+Use for:
+- Gauge metrics
+- Current state measurements
+- Latest resource utilization
+
+### Count Mode
+
+Counts the number of metric samples received, regardless of their values.
+
+```toml
+mode = "count"
+```
+
+Use for:
+- Counting samples per time window
+- Monitoring metric submission rate
+- Data quality checks
+
+### Diff Mode
+
+Computes the difference between the latest absolute metric value and the previous flush's value.
+
+```toml
+mode = "diff"
+```
+
+Use for:
+- Converting absolute metrics to incremental
+- Computing deltas (e.g., disk usage change)
+- Rate calculations
+
+**Example:**
+```
+Flush 1: gauge{name="disk_used"} = 1000 → Output: 1000
+Flush 2: gauge{name="disk_used"} = 1250 → Output: 250 (diff)
+Flush 3: gauge{name="disk_used"} = 1100 → Output: -150 (diff)
+```
+
+### Max Mode
+
+Returns the maximum value for absolute gauge metrics.
+
+```toml
+mode = "max"
+```
+
+Use for:
+- Peak resource usage
+- Maximum response times
+- High-water marks
+
+### Min Mode
+
+Returns the minimum value for absolute gauge metrics.
+
+```toml
+mode = "min"
+```
+
+Use for:
+- Minimum available resources
+- Fastest response times
+- Low-water marks
+
+### Mean Mode
+
+Computes the arithmetic mean of absolute gauge metric values.
+
+```toml
+mode = "mean"
+```
+
+Use for:
+- Average resource utilization
+- Mean response times
+- Smoothing noisy metrics
+
+### Stdev Mode
+
+Computes the standard deviation of absolute gauge metric values.
+
+```toml
+mode = "stdev"
+```
+
+Use for:
+- Variability analysis
+- Detecting inconsistent metrics
+- Statistical monitoring
+
+## Examples
+
+### Basic Metric Aggregation
+
+```toml
+[sources.metrics_in]
+type = "prometheus_scrape"
+endpoints = ["http://localhost:9090/metrics"]
+scrape_interval_secs = 1
+
+[transforms.downsample]
+type = "aggregate"
+inputs = ["metrics_in"]
+interval_ms = 10000  # Aggregate to 10-second intervals
+mode = "auto"
+
+[sinks.prometheus_out]
+type = "prometheus_remote_write"
+inputs = ["downsample"]
+endpoint = "https://prometheus.example.com/api/v1/write"
+```
+
+### Sum Request Counters
+
+```toml
+[transforms.sum_requests]
+type = "aggregate"
+inputs = ["app_metrics"]
+interval_ms = 60000  # 1 minute windows
+mode = "sum"
+
+# Input:  requests_total{path="/api"} = 100
+#         requests_total{path="/api"} = 150
+#         requests_total{path="/api"} = 200
+# Output: requests_total{path="/api"} = 450
+```
+
+### Compute Average CPU Usage
+
+```toml
+[transforms.avg_cpu]
+type = "aggregate"
+inputs = ["system_metrics"]
+interval_ms = 30000  # 30 seconds
+mode = "mean"
+
+# Input:  cpu_usage{core="0"} = 45.2
+#         cpu_usage{core="0"} = 48.1
+#         cpu_usage{core="0"} = 46.8
+# Output: cpu_usage{core="0"} = 46.7 (mean)
+```
+
+### Track Peak Memory Usage
+
+```toml
+[transforms.peak_memory]
+type = "aggregate"
+inputs = ["memory_metrics"]
+interval_ms = 300000  # 5 minutes
+mode = "max"
+
+# Tracks the highest memory usage within each 5-minute window
+```
+
+### Count Metric Samples
+
+```toml
+[transforms.sample_count]
+type = "aggregate"
+inputs = ["all_metrics"]
+interval_ms = 60000
+mode = "count"
+
+# Counts how many times each metric was reported per minute
+```
+
+### Convert Absolute to Incremental
+
+```toml
+[transforms.to_incremental]
+type = "aggregate"
+inputs = ["cumulative_counters"]
+interval_ms = 10000
+mode = "diff"
+
+# Converts cumulative counters to per-interval increments
+# Useful for systems that only expose cumulative values
+```
+
+### Pre-aggregation Pipeline
+
+```toml
+# High-frequency metrics from multiple sources
+[sources.app1_metrics]
+type = "internal_metrics"
+
+[sources.app2_metrics]
+type = "prometheus_scrape"
+endpoints = ["http://app2:9090/metrics"]
+
+# Aggregate before sending to expensive storage
+[transforms.preagg]
+type = "aggregate"
+inputs = ["app1_metrics", "app2_metrics"]
+interval_ms = 30000
+mode = "auto"
+
+# Reduced metric volume
+[sinks.datadog]
+type = "datadog_metrics"
+inputs = ["preagg"]
+api_key = "${DATADOG_API_KEY}"
+```
+
+### Multi-mode Aggregation
+
+```toml
+# Split metrics by type for different aggregations
+[transforms.counters]
+type = "filter"
+inputs = ["metrics"]
+condition = '.kind == "incremental"'
+
+[transforms.gauges]
+type = "filter"
+inputs = ["metrics"]
+condition = '.kind == "absolute"'
+
+# Sum counters
+[transforms.agg_counters]
+type = "aggregate"
+inputs = ["counters"]
+interval_ms = 60000
+mode = "sum"
+
+# Average gauges
+[transforms.agg_gauges]
+type = "aggregate"
+inputs = ["gauges"]
+interval_ms = 60000
+mode = "mean"
+
+# Combine back together
+[sinks.output]
+type = "prometheus_remote_write"
+inputs = ["agg_counters", "agg_gauges"]
+endpoint = "https://prometheus.example.com/api/v1/write"
+```
+
+## Metric Series Grouping
+
+Metrics are grouped by their **series identity**:
+
+- Metric name
+- Metric namespace
+- All tags/labels
+- Metric kind (incremental/absolute)
+
+Metrics with different series are aggregated independently:
+
+```toml
+# These are aggregated separately:
+requests_total{path="/api", method="GET"}
+requests_total{path="/api", method="POST"}
+requests_total{path="/health", method="GET"}
+```
+
+## Performance Considerations
+
+### Memory Usage
+
+The aggregate transform maintains state for each unique metric series during the flush interval. Memory usage scales with:
+
+- Number of unique metric series
+- Flush interval duration
+- Aggregation mode (mean/stdev use more memory)
+
+### Choosing Interval Duration
+
+**Shorter intervals (1-10 seconds):**
+- Lower latency
+- Higher throughput to downstream
+- Less memory usage
+- More granular data
+
+**Longer intervals (30-300 seconds):**
+- Higher latency
+- Lower throughput to downstream
+- More memory usage
+- More aggressive downsampling
+
+### Flush Behavior
+
+Metrics are flushed:
+
+1. **On interval**: Every `interval_ms` milliseconds
+2. **On shutdown**: When Vector stops, all buffered metrics are flushed immediately
+
+This guarantees no metric data is lost during normal shutdown.
+
+## Metrics and Monitoring
+
+The aggregate transform emits internal metrics:
+
+- `component_received_events_total` - Total metrics received
+- `component_sent_events_total` - Total metrics emitted
+- `aggregate_events_recorded_total` - Metrics recorded into aggregation state
+- `aggregate_flushed_total` - Number of flush operations
+- `aggregate_update_failed_total` - Failed metric updates (type mismatches)
+
+Monitor these to understand aggregation behavior:
+
+```bash
+# Reduction ratio
+reduction = 1 - (sent / received)
+
+# Example: 10,000 received, 1,000 sent = 90% reduction
+```
+
+## Common Issues
+
+### Conflicting Metric Types
+
+If the same metric series has conflicting types (e.g., first as counter, then as gauge), the new value overwrites the old:
+
+```
+metric_update_failed_total counter increments
+```
+
+Fix by ensuring metrics have consistent types at the source.
+
+### Missing Metrics
+
+If metrics appear to be missing:
+
+1. Check the flush interval - metrics are only emitted at flush time
+2. Verify metric kind matches the aggregation mode
+3. Check for series mismatches (different tags)
+
+### Unexpected Values
+
+If aggregated values are unexpected:
+
+1. Verify the aggregation mode is appropriate for metric type
+2. Check metric kind (incremental vs. absolute)
+3. Review metric arrival order and timestamps
+
+## Use Cases
+
+### Cost Reduction
+
+Reduce metric storage and ingestion costs:
+
+```toml
+# Reduce Datadog costs by 10x
+[transforms.reduce_volume]
+type = "aggregate"
+inputs = ["high_frequency_metrics"]
+interval_ms = 60000  # 1-second to 1-minute aggregation
+mode = "auto"
+```
+
+### Alert Pre-aggregation
+
+Pre-aggregate before alerting systems:
+
+```toml
+[transforms.alert_metrics]
+type = "aggregate"
+inputs = ["app_metrics"]
+interval_ms = 10000
+mode = "mean"
+
+# Smoother alerting on averaged values
+```
+
+### Backend Protection
+
+Protect downstream systems from metric storms:
+
+```toml
+[transforms.rate_limit]
+type = "aggregate"
+inputs = ["bursty_metrics"]
+interval_ms = 5000
+mode = "auto"
+
+# Limits maximum throughput to downstream
+```
+
+### Multi-resolution Metrics
+
+Create multiple resolutions for different retention periods:
+
+```toml
+# High resolution (10s) for short-term
+[transforms.high_res]
+type = "aggregate"
+inputs = ["metrics"]
+interval_ms = 10000
+mode = "auto"
+
+[sinks.short_term]
+type = "prometheus_remote_write"
+inputs = ["high_res"]
+endpoint = "https://short-term-storage.example.com"
+
+# Low resolution (5m) for long-term
+[transforms.low_res]
+type = "aggregate"
+inputs = ["metrics"]
+interval_ms = 300000
+mode = "mean"
+
+[sinks.long_term]
+type = "prometheus_remote_write"
+inputs = ["low_res"]
+endpoint = "https://long-term-storage.example.com"
+```
+
+## See Also
+
+- [Reduce Transform](/reference/transforms/reduce) - Aggregate log events
+- [Throttle Transform](https://vector.dev/docs/reference/configuration/transforms/throttle) - Rate limiting
+- [Metric Sources](/reference/sources/overview) - Metric ingestion
+- [Prometheus Sink](https://vector.dev/docs/reference/configuration/sinks/prometheus_remote_write) - Metric destinations

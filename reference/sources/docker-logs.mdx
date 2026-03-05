@@ -1,0 +1,341 @@
+---
+title: Docker Logs Source
+description: Collect container logs directly from the Docker daemon
+---
+
+The `docker_logs` source collects logs from Docker containers by connecting to the Docker daemon. It automatically discovers running containers and captures their stdout/stderr streams.
+
+## Configuration
+
+```toml
+[sources.docker]
+type = "docker_logs"
+```
+
+## Parameters
+
+<ParamField path="docker_host" type="string">
+  Docker host to connect to. Defaults to `DOCKER_HOST` environment variable, or local socket.
+  
+  ```toml
+  docker_host = "unix:///var/run/docker.sock"
+  # or
+  docker_host = "tcp://localhost:2375"
+  # or
+  docker_host = "http://localhost:2375"
+  ```
+</ParamField>
+
+<ParamField path="include_containers" type="array">
+  Container IDs or names to include. Prefix matching is used.
+  
+  ```toml
+  include_containers = ["app_", "web-", "ad08cc418cf9"]
+  ```
+</ParamField>
+
+<ParamField path="exclude_containers" type="array">
+  Container IDs or names to exclude. Takes precedence over `include_containers`.
+  
+  ```toml
+  exclude_containers = ["exclude_", "temp-"]
+  ```
+</ParamField>
+
+<ParamField path="include_labels" type="array">
+  Docker labels to filter containers by.
+  
+  ```toml
+  include_labels = [
+    "org.opencontainers.image.vendor=Vector",
+    "com.mycorp.logging=enabled"
+  ]
+  ```
+</ParamField>
+
+<ParamField path="include_images" type="array">
+  Image names to filter containers by.
+  
+  ```toml
+  include_images = ["nginx", "redis", "postgres"]
+  ```
+</ParamField>
+
+<ParamField path="host_key" type="string">
+  Field name for the hostname. Defaults to global `log_schema.host_key`.
+  
+  ```toml
+  host_key = "hostname"
+  ```
+</ParamField>
+
+<ParamField path="auto_partial_merge" type="boolean" default="true">
+  Automatically merge partial log lines.
+  
+  Docker splits long log lines into multiple chunks. When enabled, these are automatically reassembled.
+  
+  ```toml
+  auto_partial_merge = true
+  ```
+</ParamField>
+
+<ParamField path="partial_event_marker_field" type="string" default="_partial">
+  Field name to mark partial events (when `auto_partial_merge` is false).
+  
+  ```toml
+  partial_event_marker_field = "_partial"
+  ```
+</ParamField>
+
+<ParamField path="retry_backoff_secs" type="integer" default="2">
+  Time to wait before retrying after errors (in seconds).
+  
+  ```toml
+  retry_backoff_secs = 5
+  ```
+</ParamField>
+
+<ParamField path="multiline" type="object">
+  Multiline aggregation configuration.
+  
+  ```toml
+  [sources.docker.multiline]
+  start_pattern = "^[^\\s]"
+  condition_pattern = "^[\\s]"
+  mode = "continue_through"
+  timeout_ms = 1000
+  ```
+</ParamField>
+
+<ParamField path="tls" type="object">
+  TLS configuration for HTTPS Docker hosts.
+  
+  ```toml
+  [sources.docker.tls]
+  ca_file = "/path/to/ca.pem"
+  crt_file = "/path/to/cert.pem"
+  key_file = "/path/to/key.pem"
+  ```
+</ParamField>
+
+## Output Schema
+
+The Docker logs source produces log events with the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | The log line content |
+| `container_id` | string | Full container ID |
+| `container_name` | string | Container name |
+| `image` | string | Container image name |
+| `container_created_at` | timestamp | When the container was created |
+| `stream` | string | "stdout" or "stderr" |
+| `label.*` | string | Container labels (if any) |
+| `host` | string | Hostname where Vector is running |
+| `timestamp` | timestamp | Log timestamp from Docker |
+| `source_type` | string | Always "docker_logs" |
+
+## Examples
+
+### Basic Docker Logs Collection
+
+```toml
+[sources.docker]
+type = "docker_logs"
+```
+
+### Filter by Container Names
+
+```toml
+[sources.app_logs]
+type = "docker_logs"
+include_containers = ["web-", "api-", "worker-"]
+exclude_containers = ["web-test", "api-debug"]
+```
+
+### Filter by Labels
+
+```toml
+[sources.labeled_containers]
+type = "docker_logs"
+include_labels = [
+  "com.example.environment=production",
+  "com.example.team=backend"
+]
+```
+
+### Filter by Image Names
+
+```toml
+[sources.specific_images]
+type = "docker_logs"
+include_images = ["nginx", "postgres:13", "redis:alpine"]
+```
+
+### Remote Docker Host with TLS
+
+```toml
+[sources.remote_docker]
+type = "docker_logs"
+docker_host = "https://docker.example.com:2376"
+
+[sources.remote_docker.tls]
+ca_file = "/etc/vector/ca.pem"
+crt_file = "/etc/vector/cert.pem"
+key_file = "/etc/vector/key.pem"
+```
+
+### Java Stack Traces
+
+```toml
+[sources.java_containers]
+type = "docker_logs"
+include_images = ["openjdk", "tomcat"]
+
+[sources.java_containers.multiline]
+start_pattern = "^[^\\s]"
+condition_pattern = "^[\\s]"
+mode = "continue_through"
+timeout_ms = 1000
+```
+
+### Disable Partial Merge
+
+```toml
+[sources.raw_docker]
+type = "docker_logs"
+auto_partial_merge = false
+partial_event_marker_field = "partial"
+```
+
+## How It Works
+
+### Container Discovery
+
+The source connects to the Docker daemon and:
+1. Lists all currently running containers
+2. Applies filtering based on `include_*` and `exclude_*` settings
+3. Starts streaming logs from matched containers
+4. Watches for container start/stop events
+5. Automatically begins/ends log collection as containers start/stop
+
+### Log Streaming
+
+For each container, the source:
+- Opens a persistent connection to the Docker daemon's logs API
+- Receives stdout and stderr streams
+- Parses Docker's log format (timestamp + stream + message)
+- Enriches events with container metadata
+- Handles log rotation and container restarts
+
+### Partial Message Handling
+
+Docker splits log lines longer than 16KB into multiple partial messages. When `auto_partial_merge` is enabled:
+- Partial messages are buffered
+- Complete messages are reassembled
+- Only complete messages are emitted
+
+When disabled, each partial message is emitted with the `partial_event_marker_field` set to `true`.
+
+### Container Metadata
+
+The source enriches each log event with:
+- Container ID (full and short)
+- Container name
+- Image name and tag
+- Container creation timestamp
+- All container labels
+- Stream type (stdout/stderr)
+
+## Performance
+
+- Minimal overhead compared to file-based collection
+- Scales to hundreds of containers on a single host
+- Memory usage scales with the number of watched containers
+- Partial message buffering adds minimal latency
+
+## Best Practices
+
+1. **Use label-based filtering** for dynamic container environments
+2. **Mount the Docker socket** as read-only: `-v /var/run/docker.sock:/var/run/docker.sock:ro`
+3. **Run Vector in a container** for consistent Docker API access
+4. **Enable multiline aggregation** for stack traces and multi-line logs
+5. **Configure appropriate retry backoff** for Docker daemon restarts
+6. **Monitor Vector's internal metrics** for container discovery issues
+7. **Use specific image filters** to reduce overhead in large deployments
+8. **Test exclusion rules** to ensure they don't inadvertently exclude important containers
+
+## Docker Compose Example
+
+```yaml
+version: "3.8"
+
+services:
+  vector:
+    image: timberio/vector:latest
+    volumes:
+      - ./vector.toml:/etc/vector/vector.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - VECTOR_CONFIG=/etc/vector/vector.toml
+
+  app:
+    image: myapp:latest
+    labels:
+      com.example.environment: "production"
+      com.example.team: "backend"
+```
+
+## Kubernetes Considerations
+
+In Kubernetes, consider using the `kubernetes_logs` source instead, which:
+- Reads logs from Kubernetes API
+- Includes pod and namespace metadata
+- Handles Kubernetes-specific log formats
+- Integrates with Kubernetes RBAC
+
+However, `docker_logs` can still be useful for:
+- Development environments
+- Non-Kubernetes Docker deployments
+- Specific container filtering requirements
+
+## Troubleshooting
+
+### Permission Denied
+
+Ensure Vector has access to the Docker socket:
+```bash
+# Add Vector user to docker group
+sudo usermod -aG docker vector
+
+# Or run Vector as root (not recommended)
+```
+
+### Missing Containers
+
+Check filtering rules:
+```bash
+# List all containers
+docker ps -a
+
+# Check labels
+docker inspect <container> | jq '.[0].Config.Labels'
+```
+
+### High Memory Usage
+
+Reduce the number of watched containers:
+- Use more specific include/exclude filters
+- Filter by labels or images
+- Disable `auto_partial_merge` if not needed
+
+### Connection Errors
+
+Verify Docker host connectivity:
+```bash
+# Test local socket
+docker -H unix:///var/run/docker.sock ps
+
+# Test remote host
+docker -H tcp://remote-host:2375 ps
+```

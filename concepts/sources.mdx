@@ -1,0 +1,492 @@
+---
+title: Sources
+description: Ingesting observability data into Vector
+---
+
+Sources are Vector components that ingest data from external systems. They generate events (logs, metrics, or traces) and send them downstream to transforms and sinks. Vector includes 30+ built-in sources for common data collection scenarios.
+
+## How Sources Work
+
+Sources run as independent async tasks that:
+
+1. **Connect** to external systems or listen for incoming data
+2. **Read** raw data from files, network sockets, APIs, or system interfaces
+3. **Parse** data into Vector's internal event format (logs, metrics, or traces)
+4. **Emit** events downstream to transforms and sinks
+5. **Handle** backpressure by slowing down data ingestion when buffers fill
+
+### Source Types
+
+<CardGroup cols={3}>
+  <Card title="Pull Sources" icon="download">
+    Actively fetch data from external systems (polling)
+  </Card>
+  <Card title="Push Sources" icon="upload">
+    Listen for incoming data sent by external systems
+  </Card>
+  <Card title="Generator Sources" icon="rotate">
+    Generate synthetic data for testing and demos
+  </Card>
+</CardGroup>
+
+## Source Categories
+
+### File and Log Collection
+
+<CardGroup cols={2}>
+  <Card title="file" icon="file">
+    Read logs from files with glob patterns and automatic rotation handling
+  </Card>
+  <Card title="docker_logs" icon="docker">
+    Collect container logs from Docker daemon
+  </Card>
+  <Card title="kubernetes_logs" icon="dharmachakra">
+    Gather logs from Kubernetes pods via the Kubernetes API
+  </Card>
+  <Card title="journald" icon="book">
+    Read from systemd's journal for system logs
+  </Card>
+</CardGroup>
+
+**Example: File source with rotation**
+
+```yaml
+sources:
+  app_logs:
+    type: file
+    include:
+      - /var/log/myapp/*.log
+      - /var/log/myapp/**/*.log  # Recursive
+    exclude:
+      - /var/log/myapp/*.gz       # Ignore compressed files
+    read_from: beginning           # Or 'end' for new data only
+    max_line_bytes: 102400         # 100KB max line size
+    ignore_older_secs: 86400       # Skip files older than 1 day
+    fingerprint:
+      strategy: checksum            # Track files across rotations
+```
+
+### Network and Syslog
+
+<CardGroup cols={2}>
+  <Card title="syslog" icon="network-wired">
+    Receive syslog messages via TCP, UDP, or Unix sockets
+  </Card>
+  <Card title="socket" icon="plug">
+    Listen for data on TCP or UDP sockets
+  </Card>
+  <Card title="http_server" icon="server">
+    Accept HTTP/HTTPS POST requests with log or metric data
+  </Card>
+  <Card title="fluent" icon="water">
+    Receive data in Fluentd's forward protocol
+  </Card>
+</CardGroup>
+
+**Example: HTTP server source**
+
+```yaml
+sources:
+  http_logs:
+    type: http_server
+    address: 0.0.0.0:8080
+    path: /logs                    # Accept POST to /logs
+    encoding: json                  # Expect JSON payloads
+    headers:
+      - Authorization               # Capture these headers as fields
+    tls:
+      enabled: true
+      crt_file: /path/to/cert.pem
+      key_file: /path/to/key.pem
+```
+
+### Cloud Platform Sources
+
+<CardGroup cols={2}>
+  <Card title="aws_s3" icon="aws">
+    Read logs from S3 buckets with SQS notifications
+  </Card>
+  <Card title="aws_sqs" icon="aws">
+    Poll messages from AWS SQS queues
+  </Card>
+  <Card title="aws_kinesis_firehose" icon="aws">
+    Receive data from Kinesis Data Firehose
+  </Card>
+  <Card title="gcp_pubsub" icon="google">
+    Subscribe to Google Cloud Pub/Sub topics
+  </Card>
+</CardGroup>
+
+**Example: AWS S3 source with SQS**
+
+```yaml
+sources:
+  s3_logs:
+    type: aws_s3
+    region: us-east-1
+    strategy: sqs                   # Use SQS for notifications
+    sqs:
+      queue_url: https://sqs.us-east-1.amazonaws.com/123456789/logs-queue
+      poll_secs: 15
+    compression: auto               # Auto-detect gzip, zstd, etc.
+    multiline:                      # Handle multi-line logs
+      start_pattern: '^\[\d{4}-'    # Lines starting with [2024-...
+      mode: continue_past
+      timeout_ms: 1000
+```
+
+### Metrics and System Observability
+
+<CardGroup cols={2}>
+  <Card title="host_metrics" icon="computer">
+    Collect CPU, memory, disk, and network metrics from the host
+  </Card>
+  <Card title="prometheus_scrape" icon="chart-line">
+    Scrape Prometheus-compatible metric endpoints
+  </Card>
+  <Card title="internal_metrics" icon="gauge">
+    Expose Vector's own internal metrics
+  </Card>
+  <Card title="statsd" icon="chart-simple">
+    Receive StatsD metrics via UDP
+  </Card>
+</CardGroup>
+
+**Example: Host metrics collection**
+
+```yaml
+sources:
+  system_metrics:
+    type: host_metrics
+    scrape_interval_secs: 15
+    collectors:
+      - cpu
+      - disk
+      - memory
+      - network
+      - filesystem
+    namespace: host                 # Prefix metrics with 'host.'
+    filesystem:
+      devices:
+        excludes: [tmpfs, devfs]    # Skip virtual filesystems
+      filesystems:
+        includes: [ext4, xfs]
+```
+
+### Application and Service Logs
+
+<CardGroup cols={2}>
+  <Card title="exec" icon="terminal">
+    Execute commands and collect stdout/stderr as logs
+  </Card>
+  <Card title="stdin" icon="keyboard">
+    Read logs from standard input (useful for testing)
+  </Card>
+  <Card title="datadog_agent" icon="dog">
+    Receive logs and metrics from Datadog agents
+  </Card>
+  <Card title="heroku_logs" icon="h">
+    Collect logs from Heroku log drains
+  </Card>
+</CardGroup>
+
+**Example: Execute command periodically**
+
+```yaml
+sources:
+  custom_check:
+    type: exec
+    mode: scheduled
+    scheduled:
+      exec_interval_secs: 300       # Run every 5 minutes
+    command:
+      - /usr/local/bin/check-health.sh
+    decoding:
+      codec: json                   # Parse output as JSON
+```
+
+### Development and Testing
+
+<CardGroup cols={2}>
+  <Card title="demo_logs" icon="flask">
+    Generate realistic fake logs for testing
+  </Card>
+  <Card title="internal_logs" icon="bug">
+    Capture Vector's own internal logs
+  </Card>
+</CardGroup>
+
+**Example: Demo logs for testing**
+
+```yaml
+sources:
+  test_data:
+    type: demo_logs
+    format: apache_common          # apache_common, apache_error, syslog, json
+    interval: 0.1                   # Generate 10 logs per second
+    count: 1000                     # Stop after 1000 logs (optional)
+```
+
+## Source Configuration
+
+### Common Options
+
+All sources support these options:
+
+```yaml
+sources:
+  my_source:
+    type: <source_type>
+    
+    # Optional: Override default output (rarely needed)
+    # outputs: [default]
+    
+    # Optional: Acknowledgments for delivery guarantees
+    acknowledgements:
+      enabled: true                 # Wait for sink confirmation
+    
+    # Optional: Decoding configuration
+    decoding:
+      codec: json                   # json, bytes, gelf, native, etc.
+    
+    # Optional: Framing for network sources
+    framing:
+      method: newline_delimited     # newline_delimited, character_delimited, length_delimited
+```
+
+### Acknowledgements
+
+Sources can wait for downstream confirmation before acknowledging data:
+
+```yaml
+sources:
+  critical_logs:
+    type: kafka
+    bootstrap_servers: localhost:9092
+    topics:
+      - critical-app-logs
+    acknowledgements:
+      enabled: true                 # Don't commit Kafka offsets until sinks confirm
+
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs:
+      - critical_logs
+    acknowledgements:
+      enabled: true                 # Confirm when data is written
+```
+
+<Note>
+  Acknowledgements add latency but provide stronger delivery guarantees. Only enable for critical data paths where loss is unacceptable.
+</Note>
+
+### Multi-line Log Handling
+
+Many sources support multi-line log aggregation:
+
+```yaml
+sources:
+  java_logs:
+    type: file
+    include:
+      - /var/log/myapp/*.log
+    multiline:
+      start_pattern: '^\[\d{4}-\d{2}-\d{2}'  # Lines starting with timestamp
+      condition_pattern: '^\['                # Continue until next [ timestamp
+      mode: continue_through
+      timeout_ms: 1000                        # Flush incomplete after 1s
+```
+
+## Data Types
+
+Sources produce specific event types:
+
+| Source | Event Type | Notes |
+|--------|-----------|-------|
+| `file`, `socket`, `syslog` | Logs | String data with optional parsing |
+| `host_metrics`, `prometheus_scrape` | Metrics | Counters, gauges, histograms |
+| `datadog_agent` traces | Traces | Distributed tracing spans |
+| `internal_metrics` | Metrics | Vector's operational metrics |
+| `demo_logs` | Logs | Synthetic log generation |
+
+## Backpressure Handling
+
+Sources respect backpressure from downstream components:
+
+### How It Works
+
+1. When transforms or sinks are slow, their input buffers fill
+2. Backpressure propagates to the source's output channel
+3. The source pauses reading new data (file positions maintained)
+4. For network sources, TCP windows shrink or connections queue
+5. When buffers drain, sources resume automatically
+
+### File Sources
+
+File sources checkpoint their position:
+- Current read position is saved regularly
+- On restart, reading resumes from the last checkpoint
+- No data is lost during restarts or crashes
+
+### Network Sources
+
+Network sources handle backpressure via:
+- **TCP**: Send window shrinks, clients slow down naturally
+- **UDP**: Packets may be dropped (UDP is inherently lossy)
+- **HTTP**: Requests queue; configure appropriate timeouts
+
+## Performance Considerations
+
+### File Source Optimization
+
+```yaml
+sources:
+  high_throughput_logs:
+    type: file
+    include:
+      - /var/log/high-volume/*.log
+    
+    # Increase read buffer for throughput
+    max_read_bytes: 1048576         # Read 1MB at a time (default: 2KB)
+    
+    # Reduce checkpointing frequency
+    data_dir: /var/lib/vector
+    
+    # Use faster fingerprinting
+    fingerprint:
+      strategy: device_and_inode    # Faster than checksum
+```
+
+### Network Source Tuning
+
+```yaml
+sources:
+  high_volume_syslog:
+    type: syslog
+    address: 0.0.0.0:514
+    mode: tcp
+    
+    # Increase connection limits
+    max_length: 1048576             # 1MB max message size
+    receive_buffer_bytes: 65536     # 64KB socket buffer
+    
+    # TCP keepalive
+    keepalive:
+      time_secs: 60
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Choose the right source type">
+    - Use `file` for application logs written to disk
+    - Use `syslog` for centralized syslog collection
+    - Use `http_server` for application-direct log shipping
+    - Use cloud-native sources (S3, Pub/Sub) for cloud logs
+    - Use `host_metrics` for infrastructure monitoring
+  </Accordion>
+  
+  <Accordion title="Configure appropriate timeouts">
+    Set reasonable timeouts for network sources:
+    
+    ```yaml
+    sources:
+      http_logs:
+        type: http_server
+        keepalive:
+          max_connection_age_secs: 300  # Close idle connections
+    ```
+  </Accordion>
+  
+  <Accordion title="Use acknowledgements wisely">
+    Enable acknowledgements only for critical data:
+    - Financial transactions
+    - Security audit logs  
+    - Compliance-required data
+    
+    Disable for high-volume, best-effort data:
+    - Debug logs
+    - Sampling metrics
+    - Non-critical telemetry
+  </Accordion>
+  
+  <Accordion title="Monitor source health">
+    Track source metrics:
+    
+    ```yaml
+    sources:
+      vector_metrics:
+        type: internal_metrics
+    
+    transforms:
+      filter_source_metrics:
+        type: filter
+        inputs:
+          - vector_metrics
+        condition: |
+          starts_with!(.name, "component_received_events_total") ||
+          starts_with!(.name, "component_errors_total")
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle multi-line logs correctly">
+    Configure multi-line aggregation at the source (not in transforms):
+    - More efficient (less data movement)
+    - Preserves log context
+    - Reduces downstream processing
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Source Not Receiving Data
+
+1. **Check connectivity**: Verify network/file access
+   ```bash
+   # For network sources
+   telnet localhost 8080
+   
+   # For file sources
+   ls -la /var/log/myapp/
+   ```
+
+2. **Verify configuration**: Use Vector's validate command
+   ```bash
+   vector validate --config /etc/vector/vector.yaml
+   ```
+
+3. **Check permissions**: Ensure Vector can read files/bind ports
+   ```bash
+   # File permissions
+   sudo -u vector cat /var/log/myapp/app.log
+   
+   # Port binding (< 1024 requires privileges)
+   sudo setcap 'cap_net_bind_service=+ep' /usr/bin/vector
+   ```
+
+4. **Monitor metrics**: Check internal metrics for errors
+   ```bash
+   curl http://localhost:8686/metrics | grep component_errors
+   ```
+
+### High Memory Usage
+
+- Reduce `max_read_bytes` for file sources
+- Decrease `receive_buffer_bytes` for network sources
+- Add buffering between source and slow sinks
+- Enable sampling for high-volume sources
+
+### File Source Missing Data
+
+- Check `ignore_older_secs` setting
+- Verify `read_from` is set to `beginning` if historical data is needed
+- Ensure file patterns match correctly
+- Check Vector's data directory for checkpoint corruption
+
+## Related Topics
+
+- [Data Model](/concepts/data-model) - Understanding event types
+- [Pipeline Model](/concepts/pipeline-model) - How sources connect to transforms and sinks
+- [Transforms](/concepts/transforms) - Processing events from sources
+- [Buffering](/concepts/buffering) - Managing backpressure from sources

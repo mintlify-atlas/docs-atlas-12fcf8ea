@@ -1,0 +1,504 @@
+---
+title: Remap Transform
+description: Transform events using Vector Remap Language (VRL)
+---
+
+## Overview
+
+The `remap` transform is Vector's most powerful data processing component. It uses VRL (Vector Remap Language) to modify observability data as it passes through your topology. VRL is a purpose-built language designed for transforming observability data safely and efficiently.
+
+**Key Features:**
+
+- Process logs, metrics, and traces
+- Full-featured scripting with 100+ built-in functions
+- Type-safe with compile-time checking
+- High performance with compiled execution
+- Error handling with multiple strategies
+- Supports external enrichment tables
+
+## Configuration
+
+<ParamField path="source" type="string">
+  The VRL program to execute for each event. Required if `file` is not specified.
+  
+  ```toml
+  source = '''
+    . = parse_json!(.message)
+    .new_field = "new value"
+    .status = to_int!(.status)
+  '''
+  ```
+</ParamField>
+
+<ParamField path="file" type="string">
+  File path to a VRL program. Required if `source` is not specified.
+  
+  If a relative path is provided, its root is the current working directory.
+  
+  ```toml
+  file = "./my/program.vrl"
+  ```
+</ParamField>
+
+<ParamField path="files" type="array" default="[]">
+  Array of file paths to VRL programs that will be executed in order.
+  
+  ```toml
+  files = ["./transform1.vrl", "./transform2.vrl"]
+  ```
+</ParamField>
+
+<ParamField path="drop_on_error" type="bool" default="false">
+  Drop any event that encounters an error during processing.
+  
+  When `false`, events that error are passed through unchanged. When `true`, errored events are dropped entirely (unless `reroute_dropped` is enabled).
+  
+  ```toml
+  drop_on_error = true
+  ```
+</ParamField>
+
+<ParamField path="drop_on_abort" type="bool" default="true">
+  Drop any event that is manually aborted during processing.
+  
+  If a VRL program calls `abort`, this controls whether the original event is sent downstream or dropped.
+  
+  ```toml
+  drop_on_abort = true
+  ```
+</ParamField>
+
+<ParamField path="reroute_dropped" type="bool" default="false">
+  Reroute dropped events to a named output instead of discarding them.
+  
+  When enabled, dropped events are sent to a special output named `dropped` with metadata about why they were dropped.
+  
+  ```toml
+  reroute_dropped = true
+  ```
+</ParamField>
+
+<ParamField path="metric_tag_values" type="string" default="single">
+  How to expose metric tag values in VRL.
+  
+  - `single`: Tags are single strings (last value wins)
+  - `full`: Tags are arrays of strings or null values
+  
+  ```toml
+  metric_tag_values = "full"
+  ```
+</ParamField>
+
+<ParamField path="timezone" type="string">
+  Timezone for timestamp conversions without explicit timezone.
+  
+  Overrides the global timezone setting. Use any TZ database name or `local` for system time.
+  
+  ```toml
+  timezone = "America/New_York"
+  ```
+</ParamField>
+
+## Inputs
+
+<ParamField path="inputs" type="array" required>
+  List of upstream component IDs.
+  
+  ```toml
+  inputs = ["my_source", "another_transform"]
+  ```
+</ParamField>
+
+## Outputs
+
+The remap transform has one default output and optionally a `dropped` output:
+
+- **Default output**: Successfully processed events
+- **`dropped` output**: Events dropped due to errors or aborts (when `reroute_dropped = true`)
+
+Dropped events include metadata fields:
+- `metadata.dropped.reason`: "error" or "abort"
+- `metadata.dropped.message`: Error message
+- `metadata.dropped.component_id`: Component that dropped the event
+- `metadata.dropped.component_type`: "remap"
+- `metadata.dropped.component_kind`: "transform"
+
+## Examples
+
+### Basic Field Manipulation
+
+```toml
+[transforms.add_fields]
+type = "remap"
+inputs = ["my_source"]
+source = '''
+  .environment = "production"
+  .processed_at = now()
+  .service = "my-app"
+'''
+```
+
+### Parse JSON Logs
+
+```toml
+[transforms.parse_json]
+type = "remap"
+inputs = ["logs"]
+source = '''
+  # Parse JSON message field
+  . = parse_json!(.message)
+  
+  # Extract specific fields
+  .timestamp = .@timestamp
+  .level = downcase(.log_level)
+  
+  # Remove temporary fields
+  del(.@timestamp)
+  del(.log_level)
+'''
+```
+
+### Type Conversions and Validation
+
+```toml
+[transforms.normalize]
+type = "remap"
+inputs = ["metrics_source"]
+source = '''
+  # Convert string to integer with fallback
+  .status_code = to_int(.status) ?? 0
+  
+  # Parse duration with unit
+  .duration_ms = parse_duration!(.duration, "s") * 1000
+  
+  # Validate and normalize timestamp
+  .timestamp = parse_timestamp!(.time, "%Y-%m-%d %H:%M:%S")
+'''
+```
+
+### Conditional Processing
+
+```toml
+[transforms.enrich_errors]
+type = "remap"
+inputs = ["app_logs"]
+source = '''
+  # Only process error logs
+  if .level == "error" {
+    .alert = true
+    .priority = "high"
+    
+    # Extract error details
+    if exists(.exception) {
+      .error_type = .exception.type
+      .error_message = .exception.message
+    }
+  }
+'''
+```
+
+### Structured Data Parsing
+
+```toml
+[transforms.parse_nginx]
+type = "remap"
+inputs = ["nginx_logs"]
+source = '''
+  # Parse nginx log format
+  parsed, err = parse_regex(
+    .message,
+    r'^(?P<ip>[\\w\\.]+) - - \\[(?P<timestamp>[^\\]]+)\\] "(?P<method>\\w+) (?P<path>[^ ]+) HTTP/[^"]+" (?P<status>\\d+) (?P<bytes>\\d+)'
+  )
+  
+  if err == null {
+    . = merge(., parsed)
+    .status = to_int!(.status)
+    .bytes = to_int!(.bytes)
+    .timestamp = parse_timestamp!(.timestamp, "%d/%b/%Y:%H:%M:%S %z")
+  }
+'''
+```
+
+### Data Enrichment
+
+```toml
+[transforms.enrich_user]
+type = "remap"
+inputs = ["events"]
+source = '''
+  # Lookup user information from enrichment table
+  user_data = get_enrichment_table_record("users", {"id": .user_id})
+  
+  if user_data != null {
+    .user_name = user_data.name
+    .user_email = user_data.email
+    .user_tier = user_data.subscription_tier
+  }
+'''
+```
+
+### Error Handling with Rerouting
+
+```toml
+[transforms.safe_parse]
+type = "remap"
+inputs = ["raw_logs"]
+drop_on_error = true
+reroute_dropped = true
+source = '''
+  # This will drop events that fail parsing
+  .parsed = parse_json!(.message)
+  .timestamp = parse_timestamp!(.parsed.time, "%+")
+'''
+
+# Process successfully parsed logs
+[sinks.processed]
+type = "elasticsearch"
+inputs = ["safe_parse"]
+
+# Send failed logs to debug sink
+[sinks.failures]
+type = "console"
+inputs = ["safe_parse.dropped"]
+```
+
+### Multi-line Log Assembly
+
+```toml
+[transforms.extract_multiline]
+type = "remap"
+inputs = ["java_logs"]
+source = '''
+  # Check if this is a continuation line
+  if match(.message, r'^\\s') {
+    # Mark as continuation
+    .is_continuation = true
+  } else {
+    .is_continuation = false
+  }
+  
+  # Parse log level from start of line
+  level_match = parse_regex(.message, r'^(?P<level>INFO|WARN|ERROR|DEBUG)')
+  if level_match != null {
+    .level = downcase(level_match.level)
+  }
+'''
+```
+
+### Modify Metrics
+
+```toml
+[transforms.enrich_metrics]
+type = "remap"
+inputs = ["metrics"]
+source = '''
+  # Add tags to metrics
+  .tags.environment = "production"
+  .tags.datacenter = get_hostname() ?? "unknown"
+  
+  # Modify metric name
+  .name = "app." + .name
+  
+  # Change metric namespace
+  .namespace = "custom"
+  
+  # Convert counter type
+  .kind = "incremental"
+'''
+```
+
+### Using External Files
+
+```toml
+[transforms.complex_transform]
+type = "remap"
+inputs = ["logs"]
+file = "/etc/vector/transforms/parse_logs.vrl"
+```
+
+Contents of `/etc/vector/transforms/parse_logs.vrl`:
+
+```coffeescript
+# Parse application logs
+parsed = parse_json!(.message)
+
+# Normalize fields
+.timestamp = parse_timestamp!(parsed.time, "%+")
+.level = downcase(parsed.level)
+.message = parsed.msg
+
+# Extract request metadata
+if exists(parsed.request) {
+  .http.method = parsed.request.method
+  .http.path = parsed.request.path
+  .http.status = parsed.request.status
+}
+```
+
+## VRL Language Features
+
+Vector Remap Language provides:
+
+### Data Types
+
+- String, Integer, Float, Boolean
+- Timestamp, Duration, Regex
+- Array, Object (map)
+- Null
+
+### Operators
+
+- Arithmetic: `+`, `-`, `*`, `/`, `%`
+- Comparison: `==`, `!=`, `>`, `<`, `>=`, `<=`
+- Logical: `&&`, `||`, `!`
+- Null coalescing: `??`
+- Error coalescing: `!` (fallible suffix)
+
+### Built-in Functions
+
+**String manipulation**: `upcase`, `downcase`, `trim`, `split`, `replace`, `strip_whitespace`
+
+**Parsing**: `parse_json`, `parse_csv`, `parse_regex`, `parse_timestamp`, `parse_duration`
+
+**Type conversion**: `to_int`, `to_float`, `to_bool`, `to_string`, `to_timestamp`
+
+**Encoding**: `encode_base64`, `decode_base64`, `encode_json`, `sha1`, `md5`
+
+**Array/Object**: `length`, `contains`, `keys`, `values`, `push`, `flatten`
+
+**Date/Time**: `now`, `format_timestamp`, `parse_timestamp`
+
+**Utility**: `assert`, `assert_eq`, `abort`, `log`, `get_hostname`, `get_env_var`
+
+[View complete VRL function reference →](https://vector.dev/docs/reference/vrl/functions)
+
+## Error Handling
+
+VRL has two types of operations:
+
+### Infallible Operations
+
+Operations that cannot fail:
+
+```coffeescript
+.field = "value"
+.count = .count + 1
+.exists = exists(.optional_field)
+```
+
+### Fallible Operations
+
+Operations that may fail must use `!` or `?` suffix:
+
+```coffeescript
+# Abort on error
+.parsed = parse_json!(.message)
+
+# Return error
+result, err = parse_json(.message)
+if err != null {
+  log("Parse failed: " + err, level: "warn")
+}
+
+# Provide default
+.status = to_int(.status_code) ?? 0
+```
+
+## Performance Tips
+
+### Compile Once, Run Many
+
+VRL programs are compiled once at startup. Complex transformations have minimal runtime overhead.
+
+### Use Infallible Operations
+
+Infallible operations are faster than fallible ones. Use them when possible:
+
+```coffeescript
+# Slower (fallible)
+.value = to_int!(.field)
+
+# Faster if you know it's already an integer
+.value = .field
+```
+
+### Minimize Field Access
+
+Store frequently accessed fields in variables:
+
+```coffeescript
+# Less efficient
+if .request.user.id == "123" && .request.user.id != null {
+  .user = .request.user.id
+}
+
+# More efficient  
+user_id = .request.user.id
+if user_id == "123" && user_id != null {
+  .user = user_id
+}
+```
+
+### Use Appropriate Functions
+
+Choose the right function for the job:
+
+```coffeescript
+# Use contains for substring checks
+if contains(.message, "error") { }
+
+# Use match for regex patterns
+if match(.message, r'error|fail|exception') { }
+```
+
+## Testing VRL
+
+Use the `vector vrl` command to test VRL programs:
+
+```bash
+# Interactive REPL
+vector vrl
+
+# Test a file
+vector vrl --input event.json --program transform.vrl
+
+# Test inline
+echo '{"message":"test"}' | vector vrl '.message = upcase(.message)'
+```
+
+## Troubleshooting
+
+### Compilation Errors
+
+VRL checks types at compile time. Common errors:
+
+- **Type mismatch**: Ensure operations match field types
+- **Missing `!` suffix**: Fallible operations need `!` or error handling
+- **Undefined fields**: Check field existence with `exists()` first
+
+### Runtime Errors
+
+When `drop_on_error = false`, runtime errors pass through the original event. Enable `reroute_dropped` to debug:
+
+```toml
+drop_on_error = true
+reroute_dropped = true
+```
+
+Then examine dropped events for error details.
+
+### Performance Issues
+
+If remap is a bottleneck:
+
+- Enable `component_received_events_total` metrics
+- Check for expensive regex operations
+- Minimize external enrichment lookups
+- Consider splitting into multiple transforms
+
+## See Also
+
+- [VRL Functions Reference](https://vector.dev/docs/reference/vrl/functions)
+- [VRL Expressions](https://vector.dev/docs/reference/vrl/expressions)
+- [VRL Examples](https://vector.dev/docs/reference/vrl/examples)
+- [Filter Transform](/reference/transforms/filter)

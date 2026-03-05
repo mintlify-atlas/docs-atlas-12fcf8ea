@@ -1,0 +1,395 @@
+---
+title: Installation
+description: Install Vector on your platform
+---
+
+Vector can be installed on various platforms using multiple methods. Choose the installation method that best suits your environment.
+
+## Quick Install
+
+The fastest way to install Vector is using our installation script:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSfL https://sh.vector.dev | bash
+```
+
+<Note>
+The installer script will detect your platform and install the appropriate package. Use `curl ... | bash -s -- -y` to skip the confirmation prompt.
+</Note>
+
+## Installation Methods
+
+<Tabs>
+  <Tab title="Docker">
+    Vector provides official Docker images for multiple platforms and architectures.
+
+    ### Alpine (Recommended)
+
+    The Alpine image is based on musl libc and BusyBox, making it the smallest and most reliable option:
+
+    ```bash
+    docker pull timberio/vector:latest-alpine
+    docker run -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+      timberio/vector:latest-alpine
+    ```
+
+    ### Debian
+
+    Based on the Debian slim image:
+
+    ```bash
+    docker pull timberio/vector:latest-debian
+    docker run -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+      timberio/vector:latest-debian
+    ```
+
+    ### Distroless
+
+    Minimal images with only essential runtime dependencies:
+
+    **Static (musl):**
+    ```bash
+    docker pull timberio/vector:latest-distroless-static
+    ```
+
+    **Dynamic (libc):**
+    ```bash
+    docker pull timberio/vector:latest-distroless-libc
+    ```
+
+    ### Architectures
+
+    All Vector Docker images support:
+    - x86_64 (amd64)
+    - ARM64 (aarch64)
+    - ARMv7
+
+    Docker automatically pulls the correct architecture for your platform.
+
+    ### Version Tags
+
+    | Version | Tag Example |
+    |---------|-------------|
+    | Latest major | `timberio/vector:latest-alpine` |
+    | Latest minor | `timberio/vector:0.X-alpine` |
+    | Latest patch | `timberio/vector:0.53.X-alpine` |
+    | Specific version | `timberio/vector:0.53.0-alpine` |
+    | Nightly | `timberio/vector:nightly-alpine` |
+    | Specific nightly | `timberio/vector:nightly-2024-03-05-alpine` |
+
+    ### Configuration
+
+    Mount your configuration file at `/etc/vector/vector.yaml`:
+
+    ```bash
+    docker run -d \
+      -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+      -p 8686:8686 \
+      timberio/vector:latest-alpine
+    ```
+  </Tab>
+
+  <Tab title="Kubernetes">
+    Vector can be deployed on Kubernetes in multiple configurations.
+
+    ### Agent (DaemonSet)
+
+    Deploy Vector as a DaemonSet to collect logs from all nodes:
+
+    ```bash
+    kubectl apply -k https://github.com/vectordotdev/vector/distribution/kubernetes/vector-agent/
+    ```
+
+    Or using individual manifests:
+
+    ```bash
+    kubectl apply -f https://raw.githubusercontent.com/vectordotdev/vector/master/distribution/kubernetes/vector-agent/
+    ```
+
+    ### Aggregator (StatefulSet)
+
+    Deploy Vector as a StatefulSet for aggregating and processing data:
+
+    ```bash
+    kubectl apply -k https://github.com/vectordotdev/vector/distribution/kubernetes/vector-aggregator/
+    ```
+
+    ### Stateless Aggregator (Deployment)
+
+    Deploy Vector as a Deployment for stateless aggregation:
+
+    ```bash
+    kubectl apply -k https://github.com/vectordotdev/vector/distribution/kubernetes/vector-stateless-aggregator/
+    ```
+
+    ### Helm Chart
+
+    Install using Helm for more customization options:
+
+    ```bash
+    helm repo add vector https://helm.vector.dev
+    helm repo update
+    helm install vector vector/vector
+    ```
+
+    <Note>
+    The Kubernetes manifests include ServiceAccount, RBAC, ConfigMap, and Service resources.
+    </Note>
+  </Tab>
+
+  <Tab title="APT (Debian/Ubuntu)">
+    Install Vector on Debian or Ubuntu systems using APT:
+
+    ### Add Repository
+
+    ```bash
+    curl -1sLf 'https://repositories.timber.io/public/vector/cfg/setup/bash.deb.sh' | sudo -E bash
+    ```
+
+    ### Install Vector
+
+    ```bash
+    sudo apt-get install vector
+    ```
+
+    ### Start Vector
+
+    ```bash
+    sudo systemctl start vector
+    sudo systemctl enable vector
+    ```
+
+    ### Configuration
+
+    Edit the configuration file:
+
+    ```bash
+    sudo nano /etc/vector/vector.yaml
+    ```
+
+    Validate and reload:
+
+    ```bash
+    sudo vector validate
+    sudo systemctl reload vector
+    ```
+  </Tab>
+
+  <Tab title="YUM/DNF (RHEL/CentOS)">
+    Install Vector on RHEL, CentOS, Fedora, or Amazon Linux using YUM/DNF:
+
+    ### Add Repository
+
+    ```bash
+    curl -1sLf 'https://repositories.timber.io/public/vector/cfg/setup/bash.rpm.sh' | sudo -E bash
+    ```
+
+    ### Install Vector
+
+    ```bash
+    sudo yum install vector
+    # or
+    sudo dnf install vector
+    ```
+
+    ### Start Vector
+
+    ```bash
+    sudo systemctl start vector
+    sudo systemctl enable vector
+    ```
+
+    ### Configuration
+
+    Edit the configuration file:
+
+    ```bash
+    sudo vi /etc/vector/vector.yaml
+    ```
+
+    Validate and reload:
+
+    ```bash
+    sudo vector validate
+    sudo systemctl reload vector
+    ```
+  </Tab>
+
+  <Tab title="Homebrew (macOS)">
+    Install Vector on macOS using Homebrew:
+
+    ### Install
+
+    ```bash
+    brew tap vectordotdev/brew
+    brew install vector
+    ```
+
+    ### Start Vector
+
+    ```bash
+    brew services start vector
+    ```
+
+    ### Configuration
+
+    The default configuration is located at:
+
+    ```bash
+    /usr/local/etc/vector/vector.yaml
+    ```
+
+    Edit and restart:
+
+    ```bash
+    vi /usr/local/etc/vector/vector.yaml
+    brew services restart vector
+    ```
+  </Tab>
+
+  <Tab title="Systemd">
+    Manual installation using systemd service:
+
+    ### Download Binary
+
+    ```bash
+    curl -LO https://packages.timber.io/vector/0.53.0/vector-0.53.0-x86_64-unknown-linux-gnu.tar.gz
+    tar xzf vector-0.53.0-x86_64-unknown-linux-gnu.tar.gz
+    sudo cp vector-x86_64-unknown-linux-gnu/bin/vector /usr/bin/
+    ```
+
+    ### Create User
+
+    ```bash
+    sudo useradd --system --user-group --shell /usr/sbin/nologin vector
+    ```
+
+    ### Create Directories
+
+    ```bash
+    sudo mkdir -p /etc/vector
+    sudo mkdir -p /var/lib/vector
+    sudo chown -R vector:vector /var/lib/vector
+    ```
+
+    ### Install Systemd Service
+
+    Create `/etc/systemd/system/vector.service`:
+
+    ```ini
+    [Unit]
+    Description=Vector
+    Documentation=https://vector.dev
+    After=network-online.target
+    Requires=network-online.target
+
+    [Service]
+    User=vector
+    Group=vector
+    ExecStartPre=/usr/bin/vector validate
+    ExecStart=/usr/bin/vector
+    ExecReload=/usr/bin/vector validate --no-environment
+    ExecReload=/bin/kill -HUP $MAINPID
+    Restart=always
+    AmbientCapabilities=CAP_NET_BIND_SERVICE
+    EnvironmentFile=-/etc/default/vector
+    StartLimitInterval=10
+    StartLimitBurst=5
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+    ### Enable and Start
+
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable vector
+    sudo systemctl start vector
+    ```
+
+    ### Check Status
+
+    ```bash
+    sudo systemctl status vector
+    ```
+  </Tab>
+</Tabs>
+
+## Verification
+
+Verify your installation:
+
+```bash
+vector --version
+```
+
+Expected output:
+```
+vector 0.53.0 (x86_64-unknown-linux-gnu)
+```
+
+## Configuration
+
+After installation, you'll need to configure Vector. The default configuration file location varies by installation method:
+
+- **Linux (Package):** `/etc/vector/vector.yaml`
+- **macOS (Homebrew):** `/usr/local/etc/vector/vector.yaml`
+- **Docker:** `/etc/vector/vector.yaml` (mount your config)
+
+Validate your configuration:
+
+```bash
+vector validate --config /etc/vector/vector.yaml
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Learn how to configure sources, transforms, and sinks
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/reference/cli/overview">
+    Explore Vector's command-line interface
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/deployment/roles">
+    Deploy Vector in production environments
+  </Card>
+  <Card title="API Reference" icon="code" href="/reference/api/overview">
+    Monitor and manage Vector via GraphQL API
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Permission Denied
+
+If Vector fails to start due to permission issues:
+
+```bash
+# Check Vector user permissions
+sudo chown -R vector:vector /var/lib/vector
+sudo chown vector:vector /etc/vector/vector.yaml
+```
+
+### Port Already in Use
+
+If the API port (8686) is already in use:
+
+```yaml
+api:
+  enabled: true
+  address: "127.0.0.1:8687"  # Change port
+```
+
+### Validation Fails
+
+If configuration validation fails:
+
+```bash
+# Check for syntax errors
+vector validate --config /etc/vector/vector.yaml
+
+# Enable verbose output
+vector validate --verbose --config /etc/vector/vector.yaml
+```

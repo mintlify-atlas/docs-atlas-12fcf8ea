@@ -1,0 +1,347 @@
+---
+title: Monitoring
+description: Monitor Vector's health and performance with internal metrics, health checks, and the GraphQL API
+---
+
+Vector provides comprehensive monitoring capabilities through internal metrics, health checks, and a GraphQL API. This page covers how to monitor your Vector deployment effectively.
+
+## Internal Metrics
+
+Vector automatically emits internal metrics about its operation, providing visibility into data flow, performance, and errors.
+
+### Core Metrics
+
+Vector tracks these key metrics for all components:
+
+| Metric Name | Type | Description |
+|-------------|------|-------------|
+| `component_received_events_total` | Counter | Total events received by a component |
+| `component_received_bytes_total` | Counter | Total bytes received by a component |
+| `component_sent_events_total` | Counter | Total events sent by a component |
+| `component_sent_bytes_total` | Counter | Total bytes sent by a component |
+| `component_errors_total` | Counter | Total errors encountered by a component |
+| `component_allocated_bytes` | Gauge | Memory allocated by a component |
+| `uptime_seconds` | Gauge | How long Vector has been running |
+
+### Exposing Metrics
+
+Vector can expose its internal metrics through various sinks. The most common approach is using a Prometheus sink:
+
+```yaml
+sources:
+  internal_metrics:
+    type: internal_metrics
+
+sinks:
+  prometheus:
+    type: prometheus_exporter
+    inputs: [internal_metrics]
+    address: 0.0.0.0:9598
+```
+
+You can also send metrics to other monitoring systems:
+
+```yaml
+sinks:
+  datadog:
+    type: datadog_metrics
+    inputs: [internal_metrics]
+    api_key: "${DATADOG_API_KEY}"
+
+  influxdb:
+    type: influxdb_metrics
+    inputs: [internal_metrics]
+    endpoint: "http://localhost:8086"
+    database: "vector_metrics"
+```
+
+### Metric Tags
+
+All component metrics include these tags:
+
+- `component_id` - The ID of the component
+- `component_type` - The type (source, transform, sink)
+- `component_kind` - The specific component (e.g., "file", "http")
+- `host` - The hostname where Vector is running
+
+## Health Checks
+
+Vector supports health checks for all sinks to ensure they can successfully send data before starting.
+
+### Global Health Check Configuration
+
+Configure health checks globally in your Vector configuration:
+
+```yaml
+healthchecks:
+  enabled: true
+  require_healthy: true
+```
+
+**Options:**
+
+- `enabled` (default: `true`) - Enable health checks for all sinks
+- `require_healthy` (default: `false`) - Exit on startup if any sink fails its health check
+
+### Per-Sink Health Checks
+
+Override health check behavior for individual sinks:
+
+```yaml
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    endpoint: "http://localhost:9200"
+    healthcheck:
+      enabled: true
+
+  s3:
+    type: aws_s3
+    bucket: "logs"
+    healthcheck:
+      enabled: false  # Skip health check for this sink
+```
+
+### Command-Line Health Check Control
+
+You can also control health checks via command-line flags:
+
+```bash
+# Require all sinks to be healthy on startup
+vector --require-healthy --config /etc/vector/vector.yaml
+
+# Set via environment variable
+VECTOR_REQUIRE_HEALTHY=true vector
+```
+
+### Health Check Endpoint
+
+When the API is enabled, Vector exposes a health endpoint:
+
+```bash
+# Check if Vector is running
+curl http://localhost:8686/health
+```
+
+This endpoint returns HTTP 200 if Vector is running.
+
+## GraphQL API
+
+Vector's GraphQL API provides real-time monitoring and introspection capabilities.
+
+### Enabling the API
+
+Enable the GraphQL API in your configuration:
+
+```yaml
+api:
+  enabled: true
+  address: 127.0.0.1:8686
+  playground: true
+```
+
+**Configuration Options:**
+
+- `enabled` - Enable the GraphQL API (default: `false`)
+- `address` - Network address to bind to (default: `127.0.0.1:8686`)
+- `playground` - Enable GraphQL Playground UI (default: `true`)
+- `graphql` - Enable GraphQL endpoint (default: `true`)
+
+<Warning>
+When running Vector in Docker, bind to `0.0.0.0:8686` to expose the API outside the container:
+
+```yaml
+api:
+  enabled: true
+  address: 0.0.0.0:8686
+```
+</Warning>
+
+### GraphQL Playground
+
+Access the interactive GraphQL Playground at `http://localhost:8686/playground` to explore the API and run queries.
+
+### Common GraphQL Queries
+
+#### Query Component Status
+
+```graphql
+query {
+  components {
+    sources {
+      componentId
+      componentType
+    }
+    transforms {
+      componentId
+      componentType
+    }
+    sinks {
+      componentId
+      componentType
+    }
+  }
+}
+```
+
+#### Query Metrics
+
+```graphql
+subscription {
+  componentSentEventsTotals(interval: 1000) {
+    componentId
+    metric {
+      sentEventsTotal
+    }
+  }
+}
+```
+
+#### Monitor Event Throughput
+
+```graphql
+subscription {
+  componentReceivedEventsThroughputs(interval: 1000) {
+    componentId
+    throughput
+  }
+  componentSentEventsThroughputs(interval: 1000) {
+    componentId
+    throughput
+  }
+}
+```
+
+#### Track Errors
+
+```graphql
+subscription {
+  componentErrorsTotals(interval: 1000) {
+    componentId
+    metric {
+      errorsTotal
+    }
+  }
+}
+```
+
+#### Monitor Uptime
+
+```graphql
+subscription {
+  uptime(interval: 5000) {
+    seconds
+  }
+}
+```
+
+### Using the API with Vector Top
+
+The `vector top` command uses the GraphQL API to display real-time metrics:
+
+```bash
+# Connect to local Vector instance
+vector top
+
+# Connect to remote Vector instance
+vector top --url http://remote-host:8686/graphql
+```
+
+## Monitoring Best Practices
+
+### 1. Always Export Internal Metrics
+
+Configure Vector to send its internal metrics to your monitoring system:
+
+```yaml
+sources:
+  internal_metrics:
+    type: internal_metrics
+    scrape_interval_secs: 10
+
+sinks:
+  monitoring:
+    type: prometheus_exporter
+    inputs: [internal_metrics]
+    address: 0.0.0.0:9598
+```
+
+### 2. Set Up Alerting
+
+Create alerts for critical conditions:
+
+- **Error Rate**: Alert when `component_errors_total` increases rapidly
+- **Throughput Drop**: Alert when `component_sent_events_total` drops significantly
+- **Memory Usage**: Alert when `component_allocated_bytes` grows too large
+- **Component Health**: Alert when components stop processing data
+
+### 3. Monitor End-to-End Latency
+
+Track how long it takes for data to flow through your pipeline:
+
+```yaml
+transforms:
+  add_timestamp:
+    type: remap
+    inputs: [source]
+    source: |
+      .vector_received_at = now()
+```
+
+### 4. Use Health Checks in Production
+
+Always enable health checks for production deployments:
+
+```yaml
+healthchecks:
+  enabled: true
+  require_healthy: true
+```
+
+### 5. Enable the API for Troubleshooting
+
+Keep the GraphQL API enabled on a secure network to aid troubleshooting:
+
+```yaml
+api:
+  enabled: true
+  address: 127.0.0.1:8686  # Localhost only for security
+```
+
+## Monitoring in Kubernetes
+
+When running Vector in Kubernetes, expose metrics for Prometheus scraping:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector-metrics
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9598"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: vector
+  ports:
+    - name: metrics
+      port: 9598
+      targetPort: 9598
+```
+
+Configure the corresponding Vector sink:
+
+```yaml
+sinks:
+  prometheus:
+    type: prometheus_exporter
+    inputs: [internal_metrics]
+    address: 0.0.0.0:9598
+```
+
+## Next Steps
+
+- Learn about [Troubleshooting](/administration/troubleshooting) Vector issues
+- Understand how to [Validate](/administration/validation) configurations
+- Review [Upgrading](/administration/upgrading) procedures

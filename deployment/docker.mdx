@@ -1,0 +1,584 @@
+---
+title: Docker Deployment
+description: Run Vector in Docker containers with official images
+---
+
+Vector provides official Docker images for multiple base distributions, making it easy to run in containerized environments.
+
+## Official Images
+
+Vector publishes several image variants:
+
+- `timberio/vector:latest-alpine` - Alpine Linux (smallest, ~50MB)
+- `timberio/vector:latest-debian` - Debian (full-featured, ~150MB)
+- `timberio/vector:latest-distroless-libc` - Distroless with libc (secure, ~80MB)
+- `timberio/vector:latest-distroless-static` - Distroless static (most secure, ~70MB)
+
+## Quick Start
+
+### Run with default configuration
+
+```bash
+docker run -d \
+  --name vector \
+  -v /var/log:/var/log:ro \
+  timberio/vector:latest-alpine
+```
+
+### Run with custom configuration
+
+```bash
+docker run -d \
+  --name vector \
+  -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+  -v /var/log:/var/log:ro \
+  timberio/vector:latest-alpine
+```
+
+## Image Details
+
+### Alpine Image
+
+Smallest image, ideal for resource-constrained environments.
+
+**Dockerfile:** (from source)
+
+```dockerfile
+FROM docker.io/alpine:3.23 AS builder
+
+WORKDIR /vector
+ARG TARGETPLATFORM
+COPY vector-*-unknown-linux-musl*.tar.gz ./
+
+# Extract Vector binary
+RUN ARCH=$(if [ "$TARGETPLATFORM" = "linux/arm/v6" ]; then echo "arm"; else cat /etc/apk/arch; fi) \
+    && tar -xvf vector-0*-"$ARCH"-unknown-linux-musl*.tar.gz --strip-components=2
+
+RUN mkdir -p /var/lib/vector
+
+FROM docker.io/alpine:3.23
+
+LABEL org.opencontainers.image.url="https://vector.dev"
+LABEL org.opencontainers.image.source="https://github.com/vectordotdev/vector"
+LABEL org.opencontainers.image.documentation="https://vector.dev/docs"
+
+RUN apk --no-cache add ca-certificates tzdata
+
+COPY --from=builder /vector/bin/* /usr/local/bin/
+COPY --from=builder /vector/config/vector.yaml /etc/vector/vector.yaml
+COPY --from=builder /var/lib/vector /var/lib/vector
+
+RUN ["vector", "--version"]
+
+ENTRYPOINT ["/usr/local/bin/vector"]
+```
+
+**Usage:**
+
+```bash
+docker pull timberio/vector:0.53.0-alpine
+docker run -d timberio/vector:0.53.0-alpine
+```
+
+### Debian Image
+
+Full-featured image with more tools available.
+
+**Dockerfile:** (from source)
+
+```dockerfile
+FROM docker.io/debian:trixie-slim AS builder
+
+WORKDIR /vector
+COPY vector_*.deb ./
+RUN dpkg -i vector_*_"$(dpkg --print-architecture)".deb
+RUN mkdir -p /var/lib/vector
+
+FROM docker.io/debian:trixie-slim
+
+LABEL org.opencontainers.image.url="https://vector.dev"
+LABEL org.opencontainers.image.source="https://github.com/vectordotdev/vector"
+LABEL org.opencontainers.image.documentation="https://vector.dev/docs"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata systemd \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/bin/vector /usr/bin/vector
+COPY --from=builder /usr/share/vector /usr/share/vector
+COPY --from=builder /usr/share/doc/vector /usr/share/doc/vector
+COPY --from=builder /etc/vector /etc/vector
+COPY --from=builder /var/lib/vector /var/lib/vector
+
+RUN ["vector", "--version"]
+
+ENTRYPOINT ["/usr/bin/vector"]
+```
+
+**Usage:**
+
+```bash
+docker pull timberio/vector:0.53.0-debian
+docker run -d timberio/vector:0.53.0-debian
+```
+
+### Distroless Images
+
+Minimal images for enhanced security (no shell, no package manager).
+
+**Usage:**
+
+```bash
+# With libc (most compatible)
+docker pull timberio/vector:0.53.0-distroless-libc
+
+# Static (smallest, most secure)
+docker pull timberio/vector:0.53.0-distroless-static
+```
+
+## Configuration
+
+### Using Environment Variables
+
+```bash
+docker run -d \
+  --name vector \
+  -e VECTOR_LOG=debug \
+  -e VECTOR_THREADS=4 \
+  -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+  timberio/vector:latest-alpine
+```
+
+### Using Config File
+
+Create `vector.yaml`:
+
+```yaml
+data_dir: /var/lib/vector
+
+sources:
+  docker_logs:
+    type: docker_logs
+
+transforms:
+  parse:
+    type: remap
+    inputs: ["docker_logs"]
+    source: |
+      . = parse_json!(.message)
+
+sinks:
+  stdout:
+    type: console
+    inputs: ["parse"]
+    encoding:
+      codec: json
+```
+
+Run with the config:
+
+```bash
+docker run -d \
+  --name vector \
+  -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  timberio/vector:latest-alpine
+```
+
+## Docker Compose
+
+### Simple Agent
+
+```yaml
+version: '3.8'
+
+services:
+  vector:
+    image: timberio/vector:latest-alpine
+    container_name: vector
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - VECTOR_LOG=info
+    restart: unless-stopped
+```
+
+### Agent + Aggregator Stack
+
+```yaml
+version: '3.8'
+
+services:
+  # Aggregator service
+  vector-aggregator:
+    image: timberio/vector:latest-debian
+    container_name: vector-aggregator
+    ports:
+      - "6000:6000"  # Vector protocol
+      - "9090:9090"  # Prometheus metrics
+    volumes:
+      - ./aggregator.yaml:/etc/vector/vector.yaml:ro
+      - vector-data:/var/lib/vector
+    environment:
+      - VECTOR_LOG=info
+    restart: unless-stopped
+    networks:
+      - vector-net
+
+  # Agent service
+  vector-agent:
+    image: timberio/vector:latest-alpine
+    container_name: vector-agent
+    depends_on:
+      - vector-aggregator
+    volumes:
+      - ./agent.yaml:/etc/vector/vector.yaml:ro
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - VECTOR_LOG=info
+    restart: unless-stopped
+    networks:
+      - vector-net
+
+volumes:
+  vector-data:
+
+networks:
+  vector-net:
+```
+
+**agent.yaml:**
+
+```yaml
+data_dir: /var/lib/vector
+
+sources:
+  docker_logs:
+    type: docker_logs
+  
+  host_metrics:
+    type: host_metrics
+
+sinks:
+  to_aggregator:
+    type: vector
+    inputs: ["docker_logs", "host_metrics"]
+    address: "vector-aggregator:6000"
+    version: "2"
+```
+
+**aggregator.yaml:**
+
+```yaml
+data_dir: /var/lib/vector
+
+api:
+  enabled: true
+  address: "0.0.0.0:8686"
+
+sources:
+  from_agents:
+    type: vector
+    address: "0.0.0.0:6000"
+    version: "2"
+  
+  internal_metrics:
+    type: internal_metrics
+
+transforms:
+  process:
+    type: remap
+    inputs: ["from_agents"]
+    source: |
+      .processed_by = "aggregator"
+      .timestamp = now()
+
+sinks:
+  prom_exporter:
+    type: prometheus_exporter
+    inputs: ["internal_metrics"]
+    address: "0.0.0.0:9090"
+  
+  stdout:
+    type: console
+    inputs: ["process"]
+    encoding:
+      codec: json
+```
+
+### Complete Observability Stack
+
+```yaml
+version: '3.8'
+
+services:
+  # Vector for log collection
+  vector:
+    image: timberio/vector:latest-alpine
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - VECTOR_LOG=info
+    networks:
+      - observability
+
+  # Elasticsearch for log storage
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    networks:
+      - observability
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    ports:
+      - "9091:9090"
+    networks:
+      - observability
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - observability
+
+volumes:
+  es-data:
+  prom-data:
+  grafana-data:
+
+networks:
+  observability:
+```
+
+## Running Vector in Docker
+
+### Collecting Docker Logs
+
+```yaml
+sources:
+  docker_logs:
+    type: docker_logs
+    # Optionally filter by container
+    include_containers:
+      - "nginx*"
+      - "app-*"
+    exclude_containers:
+      - "vector"
+
+sinks:
+  to_elasticsearch:
+    type: elasticsearch
+    inputs: ["docker_logs"]
+    endpoint: "http://elasticsearch:9200"
+```
+
+Run with Docker socket access:
+
+```bash
+docker run -d \
+  --name vector \
+  -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  timberio/vector:latest-alpine
+```
+
+### Collecting Host Logs
+
+```yaml
+sources:
+  host_logs:
+    type: file
+    include:
+      - /var/log/syslog
+      - /var/log/auth.log
+```
+
+Mount host log directories:
+
+```bash
+docker run -d \
+  --name vector \
+  -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+  -v /var/log:/var/log:ro \
+  timberio/vector:latest-alpine
+```
+
+## Best Practices
+
+### Security
+
+- Use distroless images in production for smaller attack surface
+- Run as non-root user when possible
+- Mount configuration files as read-only (`:ro`)
+- Use Docker secrets for sensitive credentials
+- Limit socket access to read-only when collecting Docker logs
+
+### Resource Limits
+
+```yaml
+services:
+  vector:
+    image: timberio/vector:latest-alpine
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+```
+
+### Health Checks
+
+```yaml
+services:
+  vector:
+    image: timberio/vector:latest-alpine
+    healthcheck:
+      test: ["CMD", "vector", "top", "--once"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+### Data Persistence
+
+```yaml
+services:
+  vector:
+    image: timberio/vector:latest-alpine
+    volumes:
+      - vector-data:/var/lib/vector
+
+volumes:
+  vector-data:
+    driver: local
+```
+
+### Logging
+
+```yaml
+services:
+  vector:
+    image: timberio/vector:latest-alpine
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+## Troubleshooting
+
+### View logs
+
+```bash
+docker logs vector
+docker logs -f vector  # Follow logs
+docker logs --tail 100 vector  # Last 100 lines
+```
+
+### Exec into container
+
+```bash
+# Alpine/Debian images
+docker exec -it vector sh
+
+# Distroless images don't have shell
+# Use debug containers or kubectl debug
+```
+
+### Validate configuration
+
+```bash
+docker exec vector vector validate /etc/vector/vector.yaml
+```
+
+### Check Vector status
+
+```bash
+# If API is enabled
+docker exec vector vector top
+```
+
+### Inspect running container
+
+```bash
+docker inspect vector
+docker stats vector
+```
+
+### Debug networking
+
+```bash
+# Check if Vector can reach destinations
+docker exec vector nc -zv elasticsearch 9200
+```
+
+## Upgrading
+
+```bash
+# Pull latest image
+docker pull timberio/vector:latest-alpine
+
+# Stop and remove old container
+docker stop vector
+docker rm vector
+
+# Run new container
+docker run -d \
+  --name vector \
+  -v $(pwd)/vector.yaml:/etc/vector/vector.yaml:ro \
+  timberio/vector:latest-alpine
+
+# Or with Docker Compose
+docker-compose pull
+docker-compose up -d
+```
+
+## Building Custom Images
+
+You can build custom images with your configuration baked in:
+
+```dockerfile
+FROM timberio/vector:latest-alpine
+
+# Copy your configuration
+COPY vector.yaml /etc/vector/vector.yaml
+
+# Add any additional files
+COPY ./scripts /usr/local/bin/
+
+# Set environment variables
+ENV VECTOR_LOG=info
+
+ENTRYPOINT ["/usr/local/bin/vector"]
+```
+
+Build and run:
+
+```bash
+docker build -t my-vector:latest .
+docker run -d my-vector:latest
+```

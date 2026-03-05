@@ -1,0 +1,546 @@
+---
+title: AWS S3 Sink
+description: Store observability events in AWS S3 object storage with automatic partitioning
+icon: aws
+---
+
+The AWS S3 sink stores observability events in Amazon S3 buckets. It supports automatic partitioning, multiple compression algorithms, and flexible file naming strategies.
+
+## Configuration
+
+```toml
+[sinks.s3]
+type = "aws_s3"
+inputs = ["my_source"]
+
+# S3 bucket configuration
+bucket = "my-logs-bucket"
+key_prefix = "logs/date=%F/"
+
+# AWS region
+region = "us-east-1"
+
+# Authentication
+auth.access_key_id = "${AWS_ACCESS_KEY_ID}"
+auth.secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
+
+# Encoding and compression
+encoding.codec = "json"
+compression = "gzip"
+
+# Batching
+batch.max_bytes = 10485760  # 10MB
+batch.timeout_secs = 300
+```
+
+## Core Parameters
+
+<ParamField path="bucket" type="string" required>
+  The S3 bucket name. Must not include a leading `s3://` or trailing `/`.
+
+  ```toml
+  bucket = "my-logs-bucket"
+  ```
+</ParamField>
+
+<ParamField path="key_prefix" type="string" default="date=%F">
+  Prefix to apply to all object keys. Supports template syntax and strftime date formatting.
+  
+  Use a trailing `/` to create a directory-like structure.
+
+  <Expandable title="Examples">
+    ```toml
+    # Date-based partitioning
+    key_prefix = "date=%F/hour=%H/"
+    
+    # Hierarchical structure
+    key_prefix = "year=%Y/month=%m/day=%d/"
+    
+    # Template-based
+    key_prefix = "application_id={{ application_id }}/date=%F/"
+    
+    # Service-based
+    key_prefix = "service={{ service }}/environment={{ env }}/"
+    ```
+  </Expandable>
+</ParamField>
+
+<ParamField path="region" type="string" required>
+  AWS region where the S3 bucket is located.
+
+  ```toml
+  region = "us-east-1"
+  region = "eu-west-1"
+  ```
+</ParamField>
+
+<ParamField path="endpoint" type="string">
+  Custom S3-compatible endpoint (for S3-compatible storage).
+
+  ```toml
+  endpoint = "https://s3.custom.com"
+  ```
+</ParamField>
+
+## Authentication
+
+The S3 sink supports multiple AWS authentication methods:
+
+<ParamField path="auth.access_key_id" type="string">
+  AWS access key ID for authentication.
+</ParamField>
+
+<ParamField path="auth.secret_access_key" type="string">
+  AWS secret access key for authentication.
+</ParamField>
+
+<ParamField path="auth.assume_role" type="string">
+  ARN of an IAM role to assume for authentication.
+</ParamField>
+
+### Static Credentials
+
+```toml
+[sinks.s3.auth]
+access_key_id = "${AWS_ACCESS_KEY_ID}"
+secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
+```
+
+### IAM Role
+
+When running on EC2, ECS, or EKS, Vector can automatically use IAM role credentials:
+
+```toml
+# No auth configuration needed - uses instance profile
+[sinks.s3]
+bucket = "my-bucket"
+region = "us-east-1"
+```
+
+### Assume Role
+
+```toml
+[sinks.s3.auth]
+assume_role = "arn:aws:iam::123456789012:role/VectorS3WriteRole"
+```
+
+### External ID
+
+```toml
+[sinks.s3.auth]
+assume_role = "arn:aws:iam::123456789012:role/VectorS3WriteRole"
+external_id = "external-id-12345"
+```
+
+## File Naming
+
+<ParamField path="filename_time_format" type="string" default="%s">
+  Timestamp format for the time component of object keys using strftime specifiers.
+  
+  Set to empty string to disable timestamp in filename.
+
+  ```toml
+  filename_time_format = "%s"          # Unix timestamp: 1658176486
+  filename_time_format = "%Y%m%d%H%M%S" # 20220718203446
+  filename_time_format = ""            # No timestamp
+  ```
+</ParamField>
+
+<ParamField path="filename_append_uuid" type="boolean" default="true">
+  Append a UUID v4 token to the end of object keys to ensure uniqueness.
+  
+  Useful in high-volume workloads to prevent name collisions.
+
+  ```toml
+  filename_append_uuid = true
+  # Results in: date=2022-07-18/1658176486-30f6652c-71da-4f9f-800d-a1189c47c547.log.gz
+  ```
+</ParamField>
+
+<ParamField path="filename_extension" type="string">
+  Override the file extension. By default, the extension is determined by the compression setting.
+
+  ```toml
+  filename_extension = "json"
+  filename_extension = "log"
+  ```
+</ParamField>
+
+## Encoding
+
+<ParamField path="encoding.codec" type="string" required>
+  How events are encoded before writing to S3. Options:
+  - `json`: JSON encoding (one object per line)
+  - `text`: Plain text (one line per event)
+  - `ndjson`: Newline-delimited JSON
+  - `csv`: CSV format
+  - `logfmt`: Logfmt encoding
+  - `avro`: Apache Avro binary format
+  - `parquet`: Apache Parquet columnar format
+
+  ```toml
+  [sinks.s3.encoding]
+  codec = "json"
+  ```
+</ParamField>
+
+<ParamField path="encoding.only_fields" type="array">
+  Include only specified fields in the output.
+
+  ```toml
+  [sinks.s3.encoding]
+  codec = "json"
+  only_fields = ["timestamp", "message", "level"]
+  ```
+</ParamField>
+
+<ParamField path="encoding.except_fields" type="array">
+  Exclude specified fields from the output.
+
+  ```toml
+  [sinks.s3.encoding]
+  codec = "json"
+  except_fields = ["_metadata", "secret_token"]
+  ```
+</ParamField>
+
+<ParamField path="encoding.timestamp_format" type="string" default="rfc3339">
+  Format for timestamp fields. Options: `rfc3339`, `unix`, `unix_ms`, `unix_ns`.
+
+  ```toml
+  [sinks.s3.encoding]
+  codec = "json"
+  timestamp_format = "unix"
+  ```
+</ParamField>
+
+## Compression
+
+<ParamField path="compression" type="string" default="gzip">
+  Compression algorithm. Options: `none`, `gzip`, `zstd`, `snappy`.
+  
+  Compression reduces storage costs and network bandwidth.
+
+  ```toml
+  compression = "gzip"  # Good balance of speed and ratio
+  compression = "zstd"  # Better compression, slightly slower
+  compression = "none"  # No compression
+  ```
+</ParamField>
+
+## Batching
+
+Configure batching to control file size and flush frequency:
+
+<ParamField path="batch.max_bytes" type="integer" default="10485760">
+  Maximum size of a batch in bytes before creating a new file (10MB default).
+
+  ```toml
+  [sinks.s3.batch]
+  max_bytes = 52428800  # 50MB
+  ```
+</ParamField>
+
+<ParamField path="batch.timeout_secs" type="float" default="300">
+  Maximum time to wait before flushing a partial batch (5 minutes default).
+
+  ```toml
+  [sinks.s3.batch]
+  timeout_secs = 60  # Flush every minute
+  ```
+</ParamField>
+
+```toml
+[sinks.s3.batch]
+max_bytes = 10485760    # 10MB files
+timeout_secs = 300      # Flush every 5 minutes
+```
+
+## S3 Options
+
+Advanced S3-specific options:
+
+<ParamField path="options.acl" type="string">
+  Canned ACL to apply to created objects. Options: `private`, `public-read`, `public-read-write`, `authenticated-read`, `bucket-owner-read`, `bucket-owner-full-control`.
+
+  ```toml
+  [sinks.s3.options]
+  acl = "bucket-owner-full-control"
+  ```
+</ParamField>
+
+<ParamField path="options.storage_class" type="string" default="STANDARD">
+  S3 storage class. Options:
+  - `STANDARD`: Standard storage
+  - `REDUCED_REDUNDANCY`: Reduced redundancy
+  - `INTELLIGENT_TIERING`: Automatic cost optimization
+  - `STANDARD_IA`: Infrequent access
+  - `ONEZONE_IA`: One zone infrequent access
+  - `GLACIER`: Glacier storage
+  - `GLACIER_IR`: Glacier instant retrieval
+  - `DEEP_ARCHIVE`: Glacier deep archive
+
+  ```toml
+  [sinks.s3.options]
+  storage_class = "INTELLIGENT_TIERING"
+  ```
+</ParamField>
+
+<ParamField path="options.server_side_encryption" type="string">
+  Server-side encryption algorithm. Options: `AES256`, `aws:kms`.
+
+  ```toml
+  [sinks.s3.options]
+  server_side_encryption = "aws:kms"
+  ```
+</ParamField>
+
+<ParamField path="options.ssekms_key_id" type="string">
+  KMS key ID for server-side encryption with KMS. Required when `server_side_encryption = "aws:kms"`.
+
+  Supports template syntax for dynamic key selection.
+
+  ```toml
+  [sinks.s3.options]
+  server_side_encryption = "aws:kms"
+  ssekms_key_id = "arn:aws:kms:us-east-1:123456789012:key/abcd1234-..."
+  ```
+</ParamField>
+
+<ParamField path="options.tags" type="object">
+  Tags to apply to created objects.
+
+  ```toml
+  [sinks.s3.options.tags]
+  Environment = "production"
+  Application = "vector"
+  CostCenter = "engineering"
+  ```
+</ParamField>
+
+<ParamField path="options.content_encoding" type="string">
+  Override the Content-Encoding header.
+
+  ```toml
+  [sinks.s3.options]
+  content_encoding = "gzip"
+  ```
+</ParamField>
+
+<ParamField path="options.content_type" type="string">
+  Override the Content-Type header.
+
+  ```toml
+  [sinks.s3.options]
+  content_type = "application/json"
+  ```
+</ParamField>
+
+## TLS Configuration
+
+<ParamField path="tls.ca_file" type="string">
+  Path to CA certificate for custom endpoints.
+
+  ```toml
+  [sinks.s3.tls]
+  ca_file = "/path/to/ca.pem"
+  ```
+</ParamField>
+
+## Request Configuration
+
+<ParamField path="request.timeout_secs" type="integer" default="60">
+  Request timeout in seconds.
+</ParamField>
+
+<ParamField path="request.retry_attempts" type="integer" default="5">
+  Number of retry attempts for failed requests.
+</ParamField>
+
+```toml
+[sinks.s3.request]
+timeout_secs = 30
+retry_attempts = 3
+```
+
+## Advanced Options
+
+<ParamField path="force_path_style" type="boolean" default="false">
+  Use path-style addressing (bucket in path) instead of virtual-hosted style. Required for some S3-compatible services.
+
+  ```toml
+  force_path_style = true
+  # https://s3.custom.com/bucket/key instead of https://bucket.s3.custom.com/key
+  ```
+</ParamField>
+
+## Complete Examples
+
+### Basic Configuration
+
+```toml
+[sinks.s3_logs]
+type = "aws_s3"
+inputs = ["processed_logs"]
+
+bucket = "my-logs-bucket"
+key_prefix = "logs/date=%F/"
+region = "us-east-1"
+
+encoding.codec = "json"
+compression = "gzip"
+
+[sinks.s3_logs.batch]
+max_bytes = 10485760
+timeout_secs = 300
+```
+
+### Partitioned by Service and Date
+
+```toml
+[sinks.s3_partitioned]
+type = "aws_s3"
+inputs = ["logs"]
+
+bucket = "prod-logs"
+key_prefix = "service={{ service }}/date=%Y/%m/%d/"
+region = "us-west-2"
+
+auth.assume_role = "arn:aws:iam::123456789012:role/VectorRole"
+
+encoding.codec = "json"
+compression = "zstd"
+
+[sinks.s3_partitioned.batch]
+max_bytes = 52428800  # 50MB
+timeout_secs = 600
+```
+
+### With KMS Encryption
+
+```toml
+[sinks.s3_encrypted]
+type = "aws_s3"
+inputs = ["sensitive_logs"]
+
+bucket = "secure-logs-bucket"
+key_prefix = "encrypted/date=%F/"
+region = "us-east-1"
+
+encoding.codec = "json"
+compression = "gzip"
+
+[sinks.s3_encrypted.options]
+server_side_encryption = "aws:kms"
+ssekms_key_id = "arn:aws:kms:us-east-1:123456789012:key/12345678-..."
+storage_class = "STANDARD_IA"
+
+[sinks.s3_encrypted.options.tags]
+Classification = "confidential"
+Retention = "7years"
+```
+
+### High-Volume Configuration
+
+```toml
+[sinks.s3_high_volume]
+type = "aws_s3"
+inputs = ["metrics"]
+
+bucket = "metrics-bucket"
+key_prefix = "metrics/year=%Y/month=%m/day=%d/hour=%H/"
+region = "us-east-1"
+
+encoding.codec = "json"
+compression = "zstd"
+
+filename_time_format = "%Y%m%d%H%M%S"
+filename_append_uuid = true
+
+[sinks.s3_high_volume.batch]
+max_bytes = 104857600  # 100MB
+timeout_secs = 120
+
+[sinks.s3_high_volume.request]
+retry_attempts = 10
+timeout_secs = 120
+
+[sinks.s3_high_volume.options]
+storage_class = "INTELLIGENT_TIERING"
+```
+
+### S3-Compatible Storage (MinIO)
+
+```toml
+[sinks.minio]
+type = "aws_s3"
+inputs = ["logs"]
+
+bucket = "vector-logs"
+key_prefix = "logs/"
+endpoint = "https://minio.example.com"
+region = "us-east-1"  # Still required but can be any value
+
+force_path_style = true
+
+auth.access_key_id = "minioadmin"
+auth.secret_access_key = "minioadmin"
+
+encoding.codec = "json"
+compression = "gzip"
+```
+
+## Troubleshooting
+
+### Authentication Issues
+
+If you encounter authentication errors:
+
+1. Verify AWS credentials are correct
+2. Check IAM permissions include `s3:PutObject` on the bucket
+3. Ensure the bucket exists and region is correct
+4. For assume role, verify trust relationships
+
+### Object Not Created
+
+If objects aren't appearing in S3:
+
+1. Check batch timeout - may need to wait for flush
+2. Verify bucket name and region are correct
+3. Review Vector logs for errors
+4. Ensure sufficient data to trigger batch
+
+### Performance Issues
+
+1. **Increase batch size**: Larger files reduce API calls
+2. **Enable compression**: Reduces upload time
+3. **Adjust timeout**: Balance between latency and file size
+4. **Use multiple sinks**: Partition across buckets/prefixes
+5. **Choose appropriate storage class**: Consider access patterns
+
+## Best Practices
+
+1. **Use date-based partitioning** for easier querying and lifecycle management
+2. **Enable compression** to reduce storage costs (30-50% savings)
+3. **Set appropriate batch sizes** to balance cost and latency
+4. **Use IAM roles** instead of static credentials when possible
+5. **Enable KMS encryption** for sensitive data
+6. **Add meaningful tags** for cost tracking and organization
+7. **Use Intelligent-Tiering** storage class for unknown access patterns
+8. **Configure S3 Lifecycle policies** to archive or delete old data
+9. **Enable S3 versioning** for important data
+10. **Monitor CloudWatch metrics** for S3 API usage
+
+## Cost Optimization
+
+1. **Compression**: Use `gzip` or `zstd` to reduce storage costs
+2. **Batch size**: Larger batches reduce PUT request costs
+3. **Storage class**: Use `STANDARD_IA` for infrequent access
+4. **Lifecycle policies**: Automatically transition to cheaper storage
+5. **Partitioning**: Makes selective deletion easier
+
+## See Also
+
+- [AWS S3 Documentation](https://docs.aws.amazon.com/s3/)
+- [S3 Storage Classes](https://aws.amazon.com/s3/storage-classes/)
+- [S3 Server-Side Encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/serv-side-encryption.html)

@@ -1,0 +1,926 @@
+---
+title: VRL Expressions and Syntax
+description: Complete reference for VRL language syntax, expressions, and operators
+---
+
+## Overview
+
+VRL is an expression-oriented language where every construct evaluates to a value. This page documents all VRL syntax, expressions, and operators.
+
+## Program Structure
+
+A VRL program consists of one or more expressions, each ending with a newline or semicolon:
+
+```vrl
+# Single expression
+.message = "hello"
+
+# Multiple expressions
+.timestamp = now()
+.level = "info"
+.processed = true
+
+# Semicolon-separated (less common)
+.a = 1; .b = 2; .c = 3
+```
+
+The value of the last expression becomes the program's return value.
+
+## Comments
+
+VRL supports single-line comments starting with `#`:
+
+```vrl
+# This is a comment
+.field = "value"  # Inline comment
+
+# Multi-line comments require # on each line
+# This is line 1
+# This is line 2
+```
+
+## Literal Expressions
+
+Literals represent fixed values in your code.
+
+### String Literals
+
+#### Interpreted Strings
+
+Double-quoted strings with escape sequences and interpolation:
+
+```vrl
+.message = "Hello, World!"
+.path = "C:\\Users\\Alice\\file.txt"
+.multiline = "Line 1\nLine 2\nLine 3"
+.unicode = "Hello 🌍"  # Unicode supported
+.escaped = "Value with \"quotes\""
+
+# String interpolation
+user = "Alice"
+.greeting = "Hello, {{ user }}!"  # "Hello, Alice!"
+
+# Multiline strings with backslash continuation
+.long = "This is a very long string that \
+         continues on the next line"
+```
+
+#### Raw Strings
+
+Raw strings with `s'...'` syntax - no escape processing:
+
+```vrl
+.regex_pattern = s'\d+\.\d+'  # Backslashes literal
+.json = s'{"key": "value"}'   # No escaping needed
+.windows = s'C:\Users\file'   # Backslashes preserved
+```
+
+#### Escape Sequences
+
+Supported escape sequences in interpreted strings:
+
+- `\n` - Newline
+- `\r` - Carriage return
+- `\t` - Tab
+- `\\` - Backslash
+- `\"` - Double quote
+- `\'` - Single quote  
+- `\0` - Null character
+- `\{` - Literal brace (escapes interpolation)
+- `\u{7FFF}` - Unicode code point (up to 6 hex digits)
+
+### Integer Literals
+
+Whole numbers:
+
+```vrl
+.count = 42
+.negative = -100
+.zero = 0
+.large = 9223372036854775807  # i64 max
+```
+
+### Float Literals
+
+Floating-point numbers:
+
+```vrl
+.pi = 3.14159
+.negative = -0.5
+.scientific = 1.5e10
+.small = 0.0001
+```
+
+### Boolean Literals
+
+True or false values:
+
+```vrl
+.enabled = true
+.disabled = false
+.flag = true
+```
+
+### Null Literal
+
+Absence of a value:
+
+```vrl
+.missing = null
+.optional = .field ?? null
+```
+
+### Array Literals
+
+Ordered collections:
+
+```vrl
+.empty = []
+.numbers = [1, 2, 3, 4, 5]
+.mixed = ["string", 42, true, null]
+.nested = [[1, 2], [3, 4]]
+.trailing = [1, 2, 3,]  # Trailing comma allowed
+```
+
+### Object Literals
+
+Key-value maps:
+
+```vrl
+.empty = {}
+.person = {"name": "Alice", "age": 30}
+.nested = {
+  "user": {
+    "id": 123,
+    "email": "alice@example.com"
+  },
+  "active": true
+}
+```
+
+Object keys must be strings. Values can be any type.
+
+### Timestamp Literals
+
+RFC 3339 timestamps with `t'...'` syntax:
+
+```vrl
+.timestamp = t'2021-03-01T19:00:00Z'
+.with_offset = t'2021-03-01T19:00:00-05:00'
+.with_nanos = t'2021-03-01T19:00:00.123456789Z'
+```
+
+### Regular Expression Literals
+
+Regex patterns with `r'...'` syntax:
+
+```vrl
+.email_pattern = r'^[\w\.]+@[\w\.]+\.[a-z]{2,}$'
+.number_pattern = r'\d+'
+.phone_pattern = r'\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}'
+```
+
+Regex patterns are compiled at compile-time. VRL uses Rust's regex syntax.
+
+## Path Expressions
+
+Paths access and modify event fields.
+
+### Field Access
+
+Access event fields with dot notation:
+
+```vrl
+# Root event
+.
+
+# Top-level fields
+.message
+.timestamp
+.level
+
+# Nested fields
+.user.name
+.http.request.method
+.metadata.source.ip
+```
+
+### Array Indexing
+
+Access array elements by index (0-based):
+
+```vrl
+.tags[0]           # First element
+.items[5]          # Sixth element
+.matrix[0][1]      # Nested arrays
+.data[-1]          # Last element (negative indexing)
+```
+
+### Dynamic Field Access
+
+Use bracket notation for dynamic or special keys:
+
+```vrl
+.metadata["custom-header"]        # Key with hyphen
+.user["first name"]               # Key with space
+.data[field_name]                 # Variable as key
+.["numeric-key-123"]              # Root field with special chars
+```
+
+### Path Assignment
+
+Assign values to paths:
+
+```vrl
+.message = "hello"
+.user.name = "Alice"
+.tags[0] = "production"
+.metadata["custom"] = "value"
+```
+
+Intermediate objects/arrays are created automatically:
+
+```vrl
+# Creates .user object if it doesn't exist
+.user.name = "Alice"
+
+# Creates array with null padding if needed
+.tags[5] = "value"  # Creates [null, null, null, null, null, "value"]
+```
+
+## Variable Expressions
+
+Variables store intermediate values.
+
+### Variable Assignment
+
+```vrl
+# Simple assignment
+message = .message
+count = 42
+flag = true
+
+# Use in expressions
+.result = message + " - " + to_string(count)
+```
+
+### Variable Naming
+
+Variable names must:
+- Start with a letter or underscore
+- Contain only letters, numbers, and underscores
+- Not be a reserved keyword
+
+```vrl
+# Valid
+user_name = "Alice"
+_temp = 123
+value2 = "test"
+
+# Invalid
+2value = "test"     # Starts with number
+my-var = "test"     # Contains hyphen
+if = "test"         # Reserved keyword
+```
+
+### Variable Scope
+
+Variables are scoped to the VRL program and to blocks:
+
+```vrl
+# Program-level scope
+outer = "visible everywhere"
+
+if true {
+  # Block scope
+  inner = "only visible in this block"
+  .inner_value = inner     # OK
+  .outer_value = outer     # OK
+}
+
+# .result = inner  # ERROR: inner not in scope
+```
+
+## Arithmetic Expressions
+
+Arithmetic operators perform mathematical operations.
+
+### Addition
+
+```vrl
+# Integer addition
+.result = 1 + 2                    # 3
+
+# Float addition  
+.result = 1.5 + 2.5                # 4.0
+
+# Mixed (promotes to float)
+.result = 1 + 2.5                  # 3.5
+
+# String concatenation
+.result = "Hello" + " " + "World" # "Hello World"
+```
+
+### Subtraction
+
+```vrl
+.result = 10 - 5      # 5
+.result = 1.5 - 0.5   # 1.0
+.result = 5 - 10      # -5
+```
+
+### Multiplication
+
+```vrl
+.result = 3 * 4       # 12
+.result = 2.5 * 4.0   # 10.0
+.result = 3 * 2.5     # 7.5
+```
+
+### Division
+
+Float division - always returns float:
+
+```vrl
+.result = 10 / 2      # 5.0 (float!)
+.result = 7 / 2       # 3.5
+.result = 1.0 / 3.0   # 0.333...
+```
+
+### Integer Division
+
+Returns integer, truncating remainder:
+
+```vrl
+.result = 10 // 3     # 3
+.result = 7 // 2      # 3  
+.result = -7 // 2     # -4
+```
+
+### Modulo
+
+Returns remainder:
+
+```vrl
+.result = 10 % 3      # 1
+.result = 7 % 2       # 1
+.result = 10 % 5      # 0
+```
+
+### Operator Precedence
+
+From highest to lowest:
+
+1. `()` - Parentheses
+2. `*`, `/`, `//`, `%` - Multiplicative
+3. `+`, `-` - Additive
+
+```vrl
+.result = 2 + 3 * 4        # 14 (not 20)
+.result = (2 + 3) * 4      # 20
+.result = 10 - 2 + 3       # 11 (left-to-right)
+```
+
+## Comparison Expressions
+
+Comparison operators compare values and return boolean:
+
+### Equality
+
+```vrl
+.is_error = .level == "error"
+.is_200 = .status_code == 200
+.is_true = (1 == 1)           # true
+```
+
+### Inequality
+
+```vrl
+.not_ok = .status != "ok"
+.not_zero = .count != 0
+.differs = "a" != "b"         # true
+```
+
+### Greater Than
+
+```vrl
+.is_error = .status_code > 400
+.is_large = .size > 1000
+.result = 5 > 3               # true
+```
+
+### Greater Than or Equal
+
+```vrl
+.is_error = .status_code >= 400
+.is_adult = .age >= 18
+.result = 5 >= 5              # true
+```
+
+### Less Than
+
+```vrl
+.is_success = .status_code < 400
+.is_small = .size < 100
+.result = 3 < 5               # true
+```
+
+### Less Than or Equal
+
+```vrl
+.is_success = .status_code <= 399
+.is_child = .age <= 12
+.result = 5 <= 5              # true
+```
+
+### Type Comparison
+
+Comparisons require compatible types:
+
+```vrl
+# OK: same types
+1 == 1
+"a" == "a"
+true == false
+
+# OK: numeric types are comparable  
+1 == 1.0        # true (promoted to float)
+
+# ERROR: incompatible types
+# 1 == "1"      # Compile error
+# true == "true" # Compile error
+```
+
+## Logical Expressions
+
+Logical operators combine boolean expressions.
+
+### AND Operator
+
+True only if both operands are true:
+
+```vrl
+.valid = .age >= 18 && .age <= 65
+.should_process = exists(.user_id) && .enabled == true
+.complex = .level == "error" && .retries < 3 && exists(.user)
+```
+
+### OR Operator
+
+True if either operand is true:
+
+```vrl
+.is_problem = .level == "error" || .level == "critical"
+.should_alert = .status_code >= 500 || .response_time > 5000
+.found = contains(.message, "error") || contains(.message, "fail")
+```
+
+### NOT Operator
+
+Negates boolean value:
+
+```vrl
+.disabled = !.enabled
+.not_found = !exists(.user_id)
+.should_skip = !(.level == "debug")
+```
+
+### Short-Circuit Evaluation
+
+Logical operators short-circuit:
+
+```vrl
+# If first condition is false, second is not evaluated
+if false && expensive_function() {
+  # This block never executes, expensive_function never called
+}
+
+# If first condition is true, second is not evaluated
+if true || expensive_function() {
+  # This block executes, expensive_function never called
+}
+```
+
+### Operator Precedence
+
+From highest to lowest:
+
+1. `!` - NOT
+2. `&&` - AND
+3. `||` - OR
+
+```vrl
+.result = true || false && false   # true (AND binds tighter)
+.result = (true || false) && false # false (with parens)
+```
+
+## Assignment Expressions
+
+Assignment stores values in paths or variables.
+
+### Simple Assignment
+
+```vrl
+.field = "value"
+my_var = 42
+.nested.field = true
+```
+
+### Merge Assignment
+
+Merges objects:
+
+```vrl
+.metadata = {"source": "app"}
+.metadata |= {"environment": "prod"}  
+# Result: {"source": "app", "environment": "prod"}
+
+# Deep merge with nested objects
+.config = {"db": {"host": "localhost"}}
+.config |= {"db": {"port": 5432}}
+# With shallow merge: {"db": {"port": 5432}} - overwrites!
+# Use merge() function for deep merge control
+```
+
+### Coalescing Assignment
+
+Assigns only if right side succeeds:
+
+```vrl
+# Only assign if parse succeeds
+.parsed ??= parse_json(.message)
+
+# Equivalent to:
+.parsed_temp, err = parse_json(.message)
+if err == null {
+  .parsed = .parsed_temp
+}
+```
+
+### Fallible Assignment with Error Capture
+
+Capture errors when calling fallible functions:
+
+```vrl
+# Capture value and error
+.result, .error = parse_json(.message)
+
+if .error == null {
+  # Parse succeeded, use .result
+  .status = "ok"
+} else {
+  # Parse failed, .error contains error message
+  .status = "failed"
+}
+```
+
+### Chained Assignment
+
+```vrl
+# Assign same value to multiple paths
+.field1 = .field2 = .field3 = "value"
+
+# Equivalent to:
+.field3 = "value"
+.field2 = .field3
+.field1 = .field2
+```
+
+## Coalesce Expression (??)
+
+Provides fallback for null or error:
+
+```vrl
+# Use default if field is null
+.user_id = .user.id ?? "anonymous"
+
+# Use default if function fails
+.parsed = parse_json(.message) ?? {}
+
+# Chain multiple fallbacks
+.value = .primary ?? .secondary ?? .tertiary ?? "default"
+
+# Coalesce only applies to immediately preceding expression
+.result = parse_json(.a) ?? parse_json(.b) ?? {}
+```
+
+## Conditional Expressions (if)
+
+Conditional branching:
+
+### Basic If Expression
+
+```vrl
+.level = if .status_code >= 500 {
+  "error"
+} else {
+  "info"
+}
+```
+
+### If-Else If-Else
+
+```vrl
+.category = if .status_code >= 500 {
+  "error"
+} else if .status_code >= 400 {
+  "client_error"
+} else if .status_code >= 300 {
+  "redirect"
+} else if .status_code >= 200 {
+  "success"
+} else {
+  "info"
+}
+```
+
+### If Without Else
+
+```vrl
+# If without else returns null when condition is false
+.error_message = if .status_code >= 500 {
+  "Server error occurred"
+}
+# .error_message is null if status_code < 500
+```
+
+### If as Statement
+
+```vrl
+# If can be used for side effects
+if .level == "error" {
+  .alert_sent = true
+  log("Error detected: " + .message, level: "error")
+}
+```
+
+### Nested If
+
+```vrl
+if .user.authenticated {
+  if .user.role == "admin" {
+    .access_level = "full"
+  } else {
+    .access_level = "limited"
+  }
+} else {
+  .access_level = "none"
+}
+```
+
+## Block Expressions
+
+Blocks group multiple expressions:
+
+```vrl
+# Block returns value of last expression
+.result = {
+  temp1 = .value1 + .value2
+  temp2 = temp1 * 2
+  temp2 + 10  # This value is returned
+}
+# .result = ((.value1 + .value2) * 2) + 10
+```
+
+## Function Call Expressions
+
+Call built-in functions:
+
+```vrl
+# No arguments
+.timestamp = now()
+
+# Positional arguments
+.upper = upcase("hello")
+.sum = add(1, 2)
+
+# Named arguments
+.parsed = parse_timestamp(.time, format: "%Y-%m-%d")
+.formatted = format_timestamp(.ts, format: "%Y-%m-%d", timezone: "UTC")
+
+# Mixed positional and named
+.result = parse_regex!(.msg, r'(\w+)', numeric_groups: true)
+
+# Chained function calls
+.result = upcase(trim(.message))
+```
+
+## Index Expression
+
+Access array elements or object fields:
+
+```vrl
+# Array indexing
+.first = .items[0]
+.third = .items[2]
+.last = .items[-1]  # Negative indexing
+
+# Object field access (alternative to dot notation)
+.name = .user["name"]
+.header = .metadata["content-type"]
+
+# Dynamic access
+field_name = "user_id"
+.value = .[field_name]
+```
+
+## Abort Expression
+
+Aborts event processing:
+
+```vrl
+# Drop event entirely
+if .spam_score > 0.9 {
+  abort
+}
+
+# Conditional abort
+abort if .internal_only && .environment == "production"
+```
+
+Aborted events can be routed to a dropped output if configured.
+
+## Return Expression
+
+Returns from program early:
+
+```vrl
+# Return event unchanged
+if .already_processed {
+  return .
+}
+
+# Return modified event
+if .fast_path {
+  .processed = true
+  return .
+}
+
+# Continue with more processing...
+.detailed_processing = true
+```
+
+## Iteration Expressions
+
+VRL provides iteration through functions with closures.
+
+### for_each Function
+
+```vrl
+# Iterate array with index and value
+for_each(array!(.tags)) -> |index, value| {
+  log("Tag " + to_string(index) + ": " + value)
+}
+
+# Iterate object with key and value
+for_each(object!(.metadata)) -> |key, value| {
+  log("Key: " + key + ", Value: " + to_string(value))
+}
+```
+
+### map_values Function
+
+```vrl
+# Transform array values
+.doubled = map_values([1, 2, 3]) -> |v| {
+  v * 2
+}
+# Result: [2, 4, 6]
+
+# Transform object values
+.uppercase = map_values({"a": "hello", "b": "world"}) -> |v| {
+  upcase(string!(v))
+}
+# Result: {"a": "HELLO", "b": "WORLD"}
+```
+
+### map_keys Function
+
+```vrl
+# Transform object keys
+.prefixed = map_keys({"name": "Alice", "age": 30}) -> |k| {
+  "user_" + k
+}
+# Result: {"user_name": "Alice", "user_age": 30}
+```
+
+### filter Function
+
+```vrl
+# Filter array elements
+.even_numbers = filter([1, 2, 3, 4, 5]) -> |_index, value| {
+  mod(value, 2) == 0
+}
+# Result: [2, 4]
+```
+
+### reduce Function
+
+```vrl
+# Sum array values
+.sum = reduce([1, 2, 3, 4], 0) -> |accumulator, _index, value| {
+  accumulator + value
+}
+# Result: 10
+```
+
+## Closure Syntax
+
+Closures are anonymous functions used with iteration:
+
+```vrl
+# Closure syntax: |params| { body }
+map_values(.items) -> |value| { value * 2 }
+
+# Multiple parameters
+for_each(.items) -> |index, value| {
+  log("Index: " + to_string(index) + ", Value: " + to_string(value))
+}
+
+# Ignore parameter with _
+map_values(.items) -> |_index, value| { value * 2 }
+```
+
+## Operator Precedence Summary
+
+From highest to lowest:
+
+1. `()` - Grouping
+2. `[]`, `.` - Indexing, field access
+3. `!` - Logical NOT, function calls
+4. `*`, `/`, `//`, `%` - Multiplicative
+5. `+`, `-` - Additive
+6. `==`, `!=`, `<`, `<=`, `>`, `>=` - Comparison
+7. `&&` - Logical AND
+8. `||` - Logical OR
+9. `??` - Coalescing
+10. `=`, `|=`, `??=` - Assignment
+
+## Reserved Keywords
+
+These words are reserved and cannot be used as identifiers:
+
+- `if`, `else`
+- `true`, `false`
+- `null`
+- `abort`
+- `return`
+- `for`, `while`, `loop` (reserved for future use)
+
+## Best Practices
+
+### Use Type Coercion Explicitly
+
+```vrl
+# Good: explicit coercion
+.result = to_string(.count) + " items"
+
+# Bad: would be compile error
+# .result = .count + " items"
+```
+
+### Handle Fallible Operations
+
+```vrl
+# Good: error handling
+.parsed, err = parse_json(.message)
+if err == null {
+  .status = "ok"
+}
+
+# Good: provide fallback
+.parsed = parse_json(.message) ?? {}
+
+# Good: abort on error if appropriate
+.parsed = parse_json!(.message)
+```
+
+### Check Existence Before Access
+
+```vrl
+# Good: check first
+if exists(.user.id) {
+  .user_id = .user.id
+}
+
+# Good: use coalescing
+.user_id = .user.id ?? "unknown"
+```
+
+### Use Meaningful Variable Names
+
+```vrl
+# Good
+user_name = .user.name
+status_code = .http.response.status
+
+# Less clear
+x = .user.name
+sc = .http.response.status
+```
+
+## Learn More
+
+- [VRL Overview](/reference/vrl/overview) - Introduction to VRL
+- [VRL Functions](/reference/vrl/functions) - Built-in function reference
+- [VRL Examples](/reference/vrl/examples) - Real-world examples

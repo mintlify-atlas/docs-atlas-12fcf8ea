@@ -1,0 +1,504 @@
+---
+title: API Overview
+description: Monitor and manage Vector via GraphQL API
+---
+
+Vector provides a built-in GraphQL API for monitoring and managing running instances. The API enables real-time observability, health checks, and topology inspection.
+
+## Enabling the API
+
+The GraphQL API must be enabled in your Vector configuration:
+
+```yaml
+api:
+  enabled: true
+  address: "127.0.0.1:8686"
+  playground: true
+```
+
+### Configuration Options
+
+<ParamField path="enabled" type="boolean" default="false">
+  Enable or disable the GraphQL API server.
+</ParamField>
+
+<ParamField path="address" type="string" default="127.0.0.1:8686">
+  The IP address and port to bind the API server to.
+  
+  ```yaml
+  # Listen on all interfaces
+  address: "0.0.0.0:8686"
+  
+  # IPv6
+  address: "[::1]:8686"
+  
+  # Unix socket
+  address: "/var/run/vector/api.sock"
+  ```
+</ParamField>
+
+<ParamField path="playground" type="boolean" default="true">
+  Enable the GraphQL Playground web interface for interactive API exploration.
+</ParamField>
+
+<Warning>
+Binding to `0.0.0.0` or `[::]` makes the API accessible from any network interface. Ensure proper network security and firewall rules are in place.
+</Warning>
+
+## Accessing the API
+
+### GraphQL Playground
+
+When `playground` is enabled, navigate to the API address in your browser:
+
+```
+http://localhost:8686/playground
+```
+
+The Playground provides:
+- Interactive query editor
+- Auto-completion
+- Schema documentation
+- Query history
+
+### GraphQL Endpoint
+
+The GraphQL endpoint is available at:
+
+```
+http://localhost:8686/graphql
+```
+
+### Example Query (curl)
+
+```bash
+curl -X POST http://localhost:8686/graphql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "{ health }"
+  }'
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "health": true
+  }
+}
+```
+
+## API Schema
+
+Vector's GraphQL API exposes three main operation types:
+
+### Queries
+
+Queries retrieve current state and information:
+
+- **`health`** - Check if the API is reachable
+- **`components`** - List all configured components
+- **`hostMetrics`** - Get host system metrics (CPU, memory, disk, network)
+
+### Mutations
+
+<Note>
+Currently, Vector's API is read-only. Mutations are not supported.
+</Note>
+
+### Subscriptions
+
+Subscriptions provide real-time streaming data:
+
+- **`heartbeat`** - Periodic timestamp updates
+- **`uptime`** - Vector uptime metrics
+- **`componentAdded`** - Component addition events
+- **`componentRemoved`** - Component removal events
+- **`receivedEventsTotal`** - Total received events metrics
+- **`sentEventsTotal`** - Total sent events metrics
+- **`outputEventsThroughput`** - Real-time throughput metrics
+
+## Core Queries
+
+### Health Check
+
+Check if Vector's API is responding:
+
+```graphql
+query {
+  health
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "health": true
+  }
+}
+```
+
+### List Components
+
+Retrieve all configured sources, transforms, and sinks:
+
+```graphql
+query {
+  components {
+    nodes {
+      componentId
+      componentType
+      ... on Source {
+        outputType
+      }
+      ... on Transform {
+        inputs
+      }
+      ... on Sink {
+        inputs
+      }
+    }
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "components": {
+      "nodes": [
+        {
+          "componentId": "demo_logs",
+          "componentType": "demo_logs",
+          "outputType": "log"
+        },
+        {
+          "componentId": "parse",
+          "componentType": "remap",
+          "inputs": ["demo_logs"]
+        },
+        {
+          "componentId": "output",
+          "componentType": "console",
+          "inputs": ["parse"]
+        }
+      ]
+    }
+  }
+}
+```
+
+### Host Metrics
+
+Query host system metrics:
+
+```graphql
+query {
+  hostMetrics {
+    cpu {
+      cpuSecondsTotal
+    }
+    memory {
+      memoryTotalBytes
+      memoryUsedBytes
+    }
+    disk {
+      diskUsedBytes
+      diskTotalBytes
+    }
+  }
+}
+```
+
+<Note>
+Host metrics require the `sources-host_metrics` feature to be enabled at compile time.
+</Note>
+
+## Subscriptions
+
+### Heartbeat
+
+Receive periodic heartbeat updates:
+
+```graphql
+subscription {
+  heartbeat(interval: 1000) {
+    utc
+  }
+}
+```
+
+**Parameters:**
+- `interval` - Milliseconds between updates (10-60000, default: 1000)
+
+### Uptime
+
+Monitor Vector's uptime:
+
+```graphql
+subscription {
+  uptime(interval: 1000) {
+    seconds
+  }
+}
+```
+
+### Component Metrics
+
+Stream real-time component throughput:
+
+```graphql
+subscription {
+  componentReceivedEventsThroughputs(interval: 1000) {
+    componentId
+    throughput
+  }
+}
+```
+
+```graphql
+subscription {
+  componentSentEventsThroughputs(interval: 1000) {
+    componentId
+    throughput
+  }
+}
+```
+
+### Output Throughput
+
+Monitor output event throughput:
+
+```graphql
+subscription {
+  outputEventsThroughput(interval: 1000) {
+    throughput
+  }
+}
+```
+
+## Filtering and Sorting
+
+### Filter Components
+
+Filter components by ID or type:
+
+```graphql
+query {
+  components(
+    filter: {
+      componentId: [{ equals: "demo_logs" }]
+    }
+  ) {
+    nodes {
+      componentId
+      componentType
+    }
+  }
+}
+```
+
+```graphql
+query {
+  components(
+    filter: {
+      componentKind: [{ equals: SOURCE }]
+    }
+  ) {
+    nodes {
+      componentId
+      componentType
+    }
+  }
+}
+```
+
+### Sort Components
+
+Sort by component key or kind:
+
+```graphql
+query {
+  components(
+    sortBy: {
+      field: COMPONENT_KEY
+      direction: ASC
+    }
+  ) {
+    nodes {
+      componentId
+      componentType
+    }
+  }
+}
+```
+
+**Sort fields:**
+- `COMPONENT_KEY` - Sort by component ID
+- `COMPONENT_KIND` - Sort by type (source, transform, sink)
+
+**Directions:**
+- `ASC` - Ascending
+- `DESC` - Descending
+
+## Pagination
+
+Use Relay-style cursor pagination:
+
+```graphql
+query {
+  components(first: 10, after: "cursor") {
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+    edges {
+      cursor
+      node {
+        componentId
+        componentType
+      }
+    }
+  }
+}
+```
+
+**Parameters:**
+- `first` - Number of items to return
+- `after` - Cursor to start from
+- `last` - Number of items from the end
+- `before` - Cursor to end at
+
+## Using with Tools
+
+### Vector Top
+
+The `vector top` command uses the GraphQL API to display a real-time dashboard:
+
+```bash
+vector top http://localhost:8686/graphql
+```
+
+### Vector Tap
+
+The `vector tap` command uses the API to sample component outputs:
+
+```bash
+vector tap http://localhost:8686/graphql demo_logs
+```
+
+### Client Libraries
+
+Use any GraphQL client library:
+
+**JavaScript/TypeScript:**
+```javascript
+import { GraphQLClient } from 'graphql-request';
+
+const client = new GraphQLClient('http://localhost:8686/graphql');
+
+const query = `{
+  components {
+    nodes {
+      componentId
+      componentType
+    }
+  }
+}`;
+
+const data = await client.request(query);
+console.log(data);
+```
+
+**Python:**
+```python
+from gql import gql, Client
+from gql.transport.requests import RequestsHTTPTransport
+
+transport = RequestsHTTPTransport(url='http://localhost:8686/graphql')
+client = Client(transport=transport, fetch_schema_from_transport=True)
+
+query = gql("""
+  query {
+    components {
+      nodes {
+        componentId
+        componentType
+      }
+    }
+  }
+""")
+
+result = client.execute(query)
+print(result)
+```
+
+## Security Considerations
+
+<Warning>
+The GraphQL API does not currently support authentication or authorization. Secure access using:
+
+- Network firewalls
+- VPN or private networks
+- Reverse proxy with authentication (e.g., nginx with basic auth)
+- SSH tunneling for remote access
+</Warning>
+
+### SSH Tunnel Example
+
+```bash
+# Create tunnel to remote Vector instance
+ssh -L 8686:localhost:8686 user@remote-host
+
+# Access via localhost
+curl http://localhost:8686/graphql
+```
+
+## Troubleshooting
+
+### API Not Responding
+
+Check if the API is enabled:
+
+```bash
+curl http://localhost:8686/health
+```
+
+If connection is refused:
+1. Verify `api.enabled: true` in configuration
+2. Check the `api.address` binding
+3. Ensure Vector is running: `systemctl status vector`
+4. Check logs: `journalctl -u vector -f`
+
+### Connection Timeout
+
+If the API times out:
+1. Check firewall rules: `sudo iptables -L`
+2. Verify the port is listening: `netstat -tlnp | grep 8686`
+3. Check for network connectivity
+
+### Playground Not Loading
+
+If the playground doesn't load:
+1. Verify `api.playground: true`
+2. Try the endpoint directly: `/graphql` instead of `/playground`
+3. Check browser console for errors
+4. Clear browser cache
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GraphQL Reference" icon="book" href="/reference/api/graphql">
+    Detailed schema reference for all queries and subscriptions
+  </Card>
+  <Card title="CLI Top Command" icon="chart-line" href="/reference/cli/commands#top">
+    Monitor Vector with the built-in dashboard
+  </Card>
+  <Card title="Monitoring" icon="display" href="/administration/monitoring">
+    Set up comprehensive monitoring for Vector
+  </Card>
+</CardGroup>

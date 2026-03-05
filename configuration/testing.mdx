@@ -1,0 +1,531 @@
+---
+title: Configuration Testing
+description: Test your Vector configuration with unit tests
+---
+
+Vector provides a built-in unit testing framework that allows you to validate your configuration before deploying it. Unit tests ensure your transforms process events correctly.
+
+## Test Configuration
+
+Tests are defined in the `tests` section of your configuration file:
+
+```yaml
+transforms:
+  parse_logs:
+    type: remap
+    inputs: []
+    source: |
+      . = parse_json!(.message)
+      .level = upcase!(.level)
+
+tests:
+  - name: "test_json_parsing"
+    input:
+      insert_at: parse_logs
+      type: log
+      log_fields:
+        message: '{"level": "error", "msg": "test"}'
+    outputs:
+      - extract_from: parse_logs
+        conditions:
+          - type: vrl
+            source: '.level == "ERROR"'
+```
+
+## Test Structure
+
+<ParamField path="name" type="string" required>
+  Descriptive name for the test case.
+</ParamField>
+
+<ParamField path="input" type="object">
+  Single input event to test. Use this OR `inputs` (not both).
+</ParamField>
+
+<ParamField path="inputs" type="array">
+  Multiple input events to test. Use this OR `input` (not both).
+</ParamField>
+
+<ParamField path="outputs" type="array" required>
+  Expected outputs after processing.
+</ParamField>
+
+<ParamField path="no_outputs_from" type="array">
+  List of component IDs that should NOT produce any output.
+</ParamField>
+
+## Input Types
+
+### Log Input
+
+Test with a log event:
+
+```yaml
+tests:
+  - name: "test_log_event"
+    input:
+      insert_at: my_transform
+      type: log
+      log_fields:
+        message: "test message"
+        level: "info"
+        timestamp: "2023-01-01T00:00:00Z"
+```
+
+<ParamField path="input.insert_at" type="string" required>
+  The transform component to insert the test event into.
+</ParamField>
+
+<ParamField path="input.type" type="string" required>
+  Type of input event: `log`, `metric`, `raw`, or `vrl`.
+</ParamField>
+
+<ParamField path="input.log_fields" type="object">
+  Fields to include in the log event. Required when `type` is `log`.
+</ParamField>
+
+### Raw Input
+
+Test with raw string data:
+
+```yaml
+tests:
+  - name: "test_raw_input"
+    input:
+      insert_at: parse_syslog
+      type: raw
+      value: "<28>1 2023-01-01T00:00:00Z host app - - - test message"
+```
+
+<ParamField path="input.value" type="string">
+  Raw string value to use as input. Required when `type` is `raw`.
+</ParamField>
+
+### VRL Input
+
+Generate input using VRL:
+
+```yaml
+tests:
+  - name: "test_vrl_input"
+    input:
+      insert_at: my_transform
+      type: vrl
+      source: |
+        .message = "generated message"
+        .timestamp = now()
+```
+
+<ParamField path="input.source" type="string">
+  VRL code to generate the input event. Required when `type` is `vrl`.
+</ParamField>
+
+### Metric Input
+
+Test with metric events:
+
+```yaml
+tests:
+  - name: "test_metric"
+    input:
+      insert_at: metric_transform
+      type: metric
+      metric:
+        name: "request_count"
+        namespace: "app"
+        kind: "absolute"
+        counter:
+          value: 42.0
+```
+
+<ParamField path="input.metric" type="object">
+  Metric definition. Required when `type` is `metric`.
+</ParamField>
+
+## Output Conditions
+
+Define expectations for transform outputs:
+
+```yaml
+outputs:
+  - extract_from: my_transform
+    conditions:
+      - type: vrl
+        source: '.level == "ERROR"'
+      - type: vrl
+        source: 'exists(.timestamp)'
+```
+
+<ParamField path="outputs[].extract_from" type="string" required>
+  Component ID to extract output from. Can be a string or array of strings.
+</ParamField>
+
+<ParamField path="outputs[].conditions" type="array">
+  Array of conditions that must all pass for the test to succeed.
+</ParamField>
+
+<ParamField path="outputs[].conditions[].type" type="string" required>
+  Condition type: `vrl` is most common.
+</ParamField>
+
+<ParamField path="outputs[].conditions[].source" type="string" required>
+  VRL expression that must evaluate to `true`.
+</ParamField>
+
+## Multiple Input Events
+
+Test transforms that process multiple events:
+
+```yaml
+tests:
+  - name: "test_multiple_inputs"
+    inputs:
+      - insert_at: dedupe
+        type: log
+        log_fields:
+          message: "duplicate message"
+          id: "1"
+      - insert_at: dedupe
+        type: log
+        log_fields:
+          message: "duplicate message"
+          id: "1"
+      - insert_at: dedupe
+        type: log
+        log_fields:
+          message: "unique message"
+          id: "2"
+    outputs:
+      - extract_from: dedupe
+        conditions:
+          - type: vrl
+            source: 'length(.) == 2'  # Only 2 events should pass through
+```
+
+## No Outputs Test
+
+Test that certain events are dropped:
+
+```yaml
+transforms:
+  filter_errors:
+    type: filter
+    inputs: []
+    condition:
+      type: vrl
+      source: '.level == "error"'
+
+tests:
+  - name: "test_non_errors_dropped"
+    input:
+      insert_at: filter_errors
+      type: log
+      log_fields:
+        level: "info"
+        message: "info message"
+    no_outputs_from: [filter_errors]
+```
+
+<ParamField path="no_outputs_from" type="array">
+  List of component IDs that should produce no output for this test.
+</ParamField>
+
+## Real-World Examples
+
+### Testing JSON Parsing
+
+```yaml
+transforms:
+  parse_json:
+    type: remap
+    inputs: []
+    source: |
+      . = parse_json!(.message)
+
+tests:
+  - name: "parse_valid_json"
+    input:
+      insert_at: parse_json
+      type: log
+      log_fields:
+        message: '{"user": "alice", "action": "login"}'
+    outputs:
+      - extract_from: parse_json
+        conditions:
+          - type: vrl
+            source: '.user == "alice"'
+          - type: vrl
+            source: '.action == "login"'
+  
+  - name: "handle_invalid_json"
+    input:
+      insert_at: parse_json
+      type: log
+      log_fields:
+        message: 'invalid json{'
+    no_outputs_from: [parse_json]  # Should drop on error
+```
+
+### Testing Apache Log Parsing
+
+```yaml
+transforms:
+  parse_apache:
+    type: remap
+    inputs: []
+    source: |
+      . = parse_apache_log!(.message)
+      .status_code = to_int!(.status)
+
+tests:
+  - name: "parse_apache_log"
+    input:
+      insert_at: parse_apache
+      type: raw
+      value: '127.0.0.1 - - [01/Jan/2023:00:00:00 +0000] "GET /index.html HTTP/1.1" 200 1234'
+    outputs:
+      - extract_from: parse_apache
+        conditions:
+          - type: vrl
+            source: '.host == "127.0.0.1"'
+          - type: vrl
+            source: '.status_code == 200'
+          - type: vrl
+            source: '.method == "GET"'
+          - type: vrl
+            source: '.path == "/index.html"'
+```
+
+### Testing Data Enrichment
+
+```yaml
+transforms:
+  enrich:
+    type: remap
+    inputs: []
+    source: |
+      .environment = "production"
+      .processed_at = now()
+      .level = upcase!(.level)
+
+tests:
+  - name: "test_enrichment"
+    input:
+      insert_at: enrich
+      type: log
+      log_fields:
+        level: "error"
+        message: "test error"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: '.environment == "production"'
+          - type: vrl
+            source: '.level == "ERROR"'
+          - type: vrl
+            source: 'exists(.processed_at)'
+```
+
+### Testing Filtering
+
+```yaml
+transforms:
+  filter_critical:
+    type: filter
+    inputs: []
+    condition:
+      type: vrl
+      source: '.severity == "critical" || .severity == "error"'
+
+tests:
+  - name: "test_critical_passes"
+    input:
+      insert_at: filter_critical
+      type: log
+      log_fields:
+        severity: "critical"
+        message: "critical issue"
+    outputs:
+      - extract_from: filter_critical
+        conditions:
+          - type: vrl
+            source: '.severity == "critical"'
+  
+  - name: "test_info_dropped"
+    input:
+      insert_at: filter_critical
+      type: log
+      log_fields:
+        severity: "info"
+        message: "info message"
+    no_outputs_from: [filter_critical]
+```
+
+### Testing Aggregation
+
+```yaml
+transforms:
+  reduce:
+    type: reduce
+    inputs: []
+    group_by:
+      - host
+    merge_strategies:
+      count: sum
+    expire_after_ms: 1000
+
+tests:
+  - name: "test_aggregation"
+    inputs:
+      - insert_at: reduce
+        type: log
+        log_fields:
+          host: "server1"
+          count: 1
+      - insert_at: reduce
+        type: log
+        log_fields:
+          host: "server1"
+          count: 2
+      - insert_at: reduce
+        type: log
+        log_fields:
+          host: "server2"
+          count: 3
+    outputs:
+      - extract_from: reduce
+        conditions:
+          - type: vrl
+            source: |
+              .host == "server1" && .count == 3 ||
+              .host == "server2" && .count == 3
+```
+
+## Running Tests
+
+Execute unit tests with the Vector CLI:
+
+```bash
+# Run all tests in a configuration
+vector test /etc/vector/vector.yaml
+
+# Run tests with verbose output
+vector test --verbose /etc/vector/vector.yaml
+
+# Test specific configuration files
+vector test config/sources.yaml config/transforms.yaml
+```
+
+### Test Output
+
+Successful test run:
+```
+Running tests...
+✓ test_json_parsing passed
+✓ test_apache_log passed
+✓ test_enrichment passed
+
+3 tests passed, 0 failed
+```
+
+Failed test run:
+```
+Running tests...
+✓ test_json_parsing passed
+✗ test_apache_log failed
+  Condition failed: .status_code == 200
+  Got: 404
+
+1 test passed, 1 failed
+```
+
+## Best Practices
+
+### 1. Test Edge Cases
+
+Test both valid and invalid inputs:
+
+```yaml
+tests:
+  - name: "valid_input"
+    # Test normal case
+  
+  - name: "invalid_input"
+    # Test error handling
+  
+  - name: "empty_input"
+    # Test edge cases
+```
+
+### 2. Test Each Transform
+
+Create tests for every transform:
+
+```yaml
+transforms:
+  parse:
+    type: remap
+    # ...
+  
+  filter:
+    type: filter
+    # ...
+  
+  enrich:
+    type: remap
+    # ...
+
+tests:
+  - name: "test_parse"
+    # Test parse transform
+  
+  - name: "test_filter"
+    # Test filter transform
+  
+  - name: "test_enrich"
+    # Test enrich transform
+```
+
+### 3. Use Descriptive Names
+
+```yaml
+tests:
+  # Good
+  - name: "parse_valid_json_with_all_fields"
+  - name: "drop_events_with_invalid_timestamps"
+  - name: "enrich_user_data_from_lookup_table"
+  
+  # Bad
+  - name: "test1"
+  - name: "test"
+  - name: "check"
+```
+
+### 4. Test Complete Scenarios
+
+Test realistic data:
+
+```yaml
+tests:
+  - name: "production_log_example"
+    input:
+      insert_at: parse_logs
+      type: raw
+      value: '192.168.1.10 - alice [01/Jan/2023:00:00:00 +0000] "POST /api/users HTTP/1.1" 201 456 0.123'
+    outputs:
+      - extract_from: parse_logs
+        conditions:
+          - type: vrl
+            source: |
+              .client_ip == "192.168.1.10" &&
+              .user == "alice" &&
+              .method == "POST" &&
+              .status == 201
+```
+
+## Next Steps
+
+- [Overview](/configuration/overview) - Review configuration basics
+- [Transforms](/configuration/transforms) - Learn more about transforms
+- [VRL Documentation](https://vrl.dev) - Master Vector Remap Language

@@ -1,0 +1,240 @@
+---
+title: Sinks Overview
+description: Send observability data to any destination with Vector sinks
+---
+
+Sinks are the destinations where Vector sends your observability data after collection and transformation. Vector supports a wide range of sinks for logs, metrics, and traces.
+
+## What are Sinks?
+
+Sinks are the final component in Vector's data pipeline. They receive processed events from sources and transforms, then write them to external systems. Each sink is optimized for its specific destination, handling authentication, batching, compression, and retries automatically.
+
+## Available Sinks
+
+### Cloud Storage
+
+<CardGroup cols={2}>
+  <Card title="AWS S3" icon="aws" href="/reference/sinks/s3">
+    Store observability events in AWS S3 object storage with automatic partitioning and compression.
+  </Card>
+  <Card title="Azure Blob" icon="microsoft">
+    Write data to Azure Blob Storage with flexible encoding options.
+  </Card>
+  <Card title="GCS" icon="google">
+    Send events to Google Cloud Storage buckets.
+  </Card>
+</CardGroup>
+
+### Observability Platforms
+
+<CardGroup cols={2}>
+  <Card title="Datadog" icon="chart-line" href="/reference/sinks/datadog">
+    Publish logs, metrics, and traces to Datadog's observability platform.
+  </Card>
+  <Card title="Elasticsearch" icon="magnifying-glass" href="/reference/sinks/elasticsearch">
+    Index observability events in Elasticsearch with bulk operations and data streams.
+  </Card>
+  <Card title="Splunk HEC" icon="database">
+    Send events to Splunk via HTTP Event Collector.
+  </Card>
+  <Card title="New Relic" icon="chart-mixed">
+    Forward logs and metrics to New Relic's telemetry platform.
+  </Card>
+</CardGroup>
+
+### Message Queues & Streaming
+
+<CardGroup cols={2}>
+  <Card title="Kafka" icon="stream" href="/reference/sinks/kafka">
+    Publish observability events to Apache Kafka topics with high throughput.
+  </Card>
+  <Card title="AWS Kinesis" icon="aws">
+    Stream data to AWS Kinesis Data Streams or Firehose.
+  </Card>
+  <Card title="Pulsar" icon="satellite-dish">
+    Send events to Apache Pulsar topics.
+  </Card>
+  <Card title="NATS" icon="paper-plane">
+    Publish messages to NATS messaging system.
+  </Card>
+  <Card title="Redis" icon="database">
+    Write events to Redis using lists or pub/sub.
+  </Card>
+  <Card title="MQTT" icon="wifi">
+    Publish messages to MQTT brokers.
+  </Card>
+  <Card title="AMQP" icon="exchange">
+    Send events to AMQP 0.9.1 brokers like RabbitMQ.
+  </Card>
+</CardGroup>
+
+### Metrics & Monitoring
+
+<CardGroup cols={2}>
+  <Card title="Prometheus Exporter" icon="chart-line" href="/reference/sinks/prometheus">
+    Expose metrics on a Prometheus-compatible endpoint for scraping.
+  </Card>
+  <Card title="InfluxDB" icon="wave-pulse">
+    Write metrics to InfluxDB time-series database.
+  </Card>
+  <Card title="StatsD" icon="chart-simple">
+    Send metrics to StatsD-compatible services.
+  </Card>
+  <Card title="AWS CloudWatch Metrics" icon="aws">
+    Publish metrics to AWS CloudWatch.
+  </Card>
+</CardGroup>
+
+### Logs & Analytics
+
+<CardGroup cols={2}>
+  <Card title="AWS CloudWatch Logs" icon="aws">
+    Send log events to AWS CloudWatch Logs.
+  </Card>
+  <Card title="Loki" icon="database">
+    Ship logs to Grafana Loki for log aggregation.
+  </Card>
+  <Card title="Azure Monitor Logs" icon="microsoft">
+    Forward logs to Azure Monitor.
+  </Card>
+  <Card title="Honeycomb" icon="honeycomb">
+    Send structured events to Honeycomb for observability.
+  </Card>
+</CardGroup>
+
+### Databases
+
+<CardGroup cols={2}>
+  <Card title="ClickHouse" icon="database">
+    Write events to ClickHouse columnar database.
+  </Card>
+  <Card title="PostgreSQL" icon="database">
+    Insert logs into PostgreSQL tables.
+  </Card>
+  <Card title="Databend" icon="database">
+    Send data to Databend cloud data warehouse.
+  </Card>
+  <Card title="GreptimeDB" icon="database">
+    Write metrics and logs to GreptimeDB.
+  </Card>
+</CardGroup>
+
+### HTTP & Generic
+
+<CardGroup cols={2}>
+  <Card title="HTTP" icon="globe">
+    Send events to any HTTP endpoint with custom encoding.
+  </Card>
+  <Card title="WebSocket" icon="plug">
+    Stream events over WebSocket connections.
+  </Card>
+  <Card title="WebHDFS" icon="folder">
+    Write files to Hadoop HDFS via WebHDFS API.
+  </Card>
+</CardGroup>
+
+### Development & Debugging
+
+<CardGroup cols={2}>
+  <Card title="Console" icon="terminal">
+    Print events to stdout for debugging.
+  </Card>
+  <Card title="Blackhole" icon="circle">
+    Discard events (useful for testing and benchmarking).
+  </Card>
+  <Card title="File" icon="file">
+    Write events to local files.
+  </Card>
+</CardGroup>
+
+### Other Platforms
+
+<CardGroup cols={2}>
+  <Card title="Axiom" icon="chart-line">
+    Send logs and events to Axiom.
+  </Card>
+  <Card title="AppSignal" icon="signal">
+    Forward metrics to AppSignal.
+  </Card>
+  <Card title="GCP Chronicle" icon="google">
+    Send security telemetry to Google Chronicle.
+  </Card>
+  <Card title="OpenTelemetry" icon="chart-network">
+    Export traces and metrics in OpenTelemetry format.
+  </Card>
+  <Card title="Vector" icon="arrow-right">
+    Send events to another Vector instance.
+  </Card>
+</CardGroup>
+
+## Common Features
+
+All Vector sinks share common capabilities:
+
+### Batching
+Sinks automatically batch events to optimize throughput and reduce overhead. Configure batch size and timeout to balance latency and efficiency.
+
+### Compression
+Most sinks support compression (gzip, zstd, snappy) to reduce network bandwidth and storage costs.
+
+### Retries
+Automatic retry logic with exponential backoff handles transient failures gracefully.
+
+### Acknowledgements
+End-to-end acknowledgements ensure data delivery guarantees when configured.
+
+### Health Checks
+Built-in health checks verify sink connectivity at startup.
+
+### TLS/SSL
+Secure connections with TLS support, including custom CA certificates and client authentication.
+
+## Configuration Example
+
+Here's a basic sink configuration pattern:
+
+```toml
+[sinks.my_sink]
+type = "elasticsearch"  # Sink type
+inputs = ["my_transform"]  # Input sources
+
+# Sink-specific configuration
+endpoints = ["http://localhost:9200"]
+
+# Common options
+[sinks.my_sink.batch]
+max_events = 1000
+timeout_secs = 5
+
+[sinks.my_sink.encoding]
+codec = "json"
+
+compression = "gzip"
+```
+
+## Choosing a Sink
+
+When selecting a sink, consider:
+
+- **Data Type**: Does the sink support your data type (logs, metrics, traces)?
+- **Performance**: What throughput and latency do you need?
+- **Cost**: Consider egress charges, storage costs, and API pricing
+- **Integration**: Does it integrate with your existing tools?
+- **Reliability**: What delivery guarantees do you need?
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Elasticsearch Sink" icon="magnifying-glass" href="/reference/sinks/elasticsearch">
+    Learn how to configure the Elasticsearch sink
+  </Card>
+  <Card title="S3 Sink" icon="aws" href="/reference/sinks/s3">
+    Store data in AWS S3 with automatic partitioning
+  </Card>
+  <Card title="Kafka Sink" icon="stream" href="/reference/sinks/kafka">
+    Publish events to Kafka topics
+  </Card>
+  <Card title="Datadog Sink" icon="chart-line" href="/reference/sinks/datadog">
+    Send observability data to Datadog
+  </Card>
+</CardGroup>

@@ -1,0 +1,714 @@
+---
+title: Reliability and Delivery Guarantees
+description: Ensure reliable data delivery with Vector's acknowledgment system and failure handling
+---
+
+Reliability is fundamental to observability pipelines. Vector provides comprehensive delivery guarantees and failure handling mechanisms to ensure your data arrives at its destination without loss.
+
+## Understanding Delivery Guarantees
+
+Vector offers three levels of delivery guarantees:
+
+### At-Most-Once Delivery
+
+Events are sent once without confirmation. If delivery fails, the event is lost.
+
+**Use case**: Non-critical telemetry where some data loss is acceptable
+
+**Characteristics:**
+- Highest throughput
+- Lowest latency
+- No delivery confirmation
+- Possible data loss
+
+### At-Least-Once Delivery
+
+Events are retried until acknowledged. The same event may be delivered multiple times.
+
+**Use case**: Most observability data where duplicates can be handled downstream
+
+**Characteristics:**
+- Strong delivery guarantee
+- Possible duplicates
+- Automatic retries
+- Higher resource usage
+
+### Exactly-Once Delivery
+
+Events are delivered exactly once with no duplicates.
+
+**Use case**: Financial transactions, billing data, critical metrics
+
+**Characteristics:**
+- Strongest guarantee
+- No duplicates
+- Highest overhead
+- Requires downstream deduplication support
+
+## Component Delivery Guarantees
+
+Different Vector components provide different guarantees:
+
+| Component Type | Default Guarantee | Configurable |
+|----------------|-------------------|-------------|
+| File source | At-least-once | No |
+| Syslog source | At-most-once | No |
+| HTTP source | At-least-once | Yes |
+| Kafka source | At-least-once | No |
+| S3 sink | At-least-once | No |
+| Elasticsearch sink | At-least-once | No |
+| HTTP sink | At-least-once | Yes |
+| Kafka sink | At-least-once | No |
+
+## Acknowledgments System
+
+Vector's acknowledgment system ensures data is not dropped during processing.
+
+### How Acknowledgments Work
+
+<Steps>
+  <Step title="Event enters source">
+    Source receives or reads an event and assigns it a tracking ID.
+  </Step>
+  
+  <Step title="Event flows through pipeline">
+    Event passes through transforms while maintaining its tracking ID.
+  </Step>
+  
+  <Step title="Sink receives event">
+    Sink attempts to deliver the event to the destination.
+  </Step>
+  
+  <Step title="Acknowledgment sent">
+    Once delivery succeeds, sink sends an acknowledgment back to the source.
+  </Step>
+  
+  <Step title="Source commits event">
+    Source marks the event as successfully processed and advances its read position.
+  </Step>
+</Steps>
+
+### Configuring Acknowledgments
+
+```toml
+# Source with acknowledgment
+[sources.file_logs]
+  type = "file"
+  include = ["/var/log/app/*.log"]
+  
+  # Enable acknowledgments
+  acknowledgements.enabled = true
+
+# Sink acknowledges delivery
+[sinks.elasticsearch]
+  type = "elasticsearch"
+  inputs = ["file_logs"]
+  endpoint = "http://localhost:9200"
+  
+  # Acknowledgments automatically enabled when source requires them
+```
+
+### End-to-End Acknowledgments
+
+For multi-hop pipelines, enable end-to-end acknowledgments:
+
+```toml
+# Edge agent
+[sources.local_logs]
+  type = "file"
+  include = ["/var/log/*.log"]
+  acknowledgements.enabled = true
+
+[sinks.to_aggregator]
+  type = "vector"
+  inputs = ["local_logs"]
+  address = "aggregator.example.com:9000"
+  acknowledgements.enabled = true
+
+# Aggregator
+[sources.from_agents]
+  type = "vector"
+  address = "0.0.0.0:9000"
+  acknowledgements.enabled = true
+
+[sinks.elasticsearch]
+  type = "elasticsearch"
+  inputs = ["from_agents"]
+  endpoint = "http://localhost:9200"
+  # Acknowledgments propagate back to edge agents
+```
+
+## Buffering Strategies
+
+Buffers are crucial for reliability, providing temporary storage during downstream failures.
+
+### Memory Buffers
+
+Best for performance when durability across restarts isn't required:
+
+```toml
+[sinks.http_output]
+  type = "http"
+  uri = "https://api.example.com/logs"
+  encoding.codec = "json"
+  
+  [sinks.http_output.buffer]
+    type = "memory"
+    max_events = 10000
+    when_full = "block"  # Apply backpressure
+```
+
+**when_full options:**
+
+```toml
+# Block: Apply backpressure (recommended for reliability)
+when_full = "block"
+
+# Drop newest: Drop new events when full
+when_full = "drop_newest"
+
+# Drop oldest: Drop oldest events to make room
+when_full = "drop_oldest"
+```
+
+### Disk Buffers
+
+Provide durability across Vector restarts:
+
+```toml
+[sinks.critical_sink]
+  type = "elasticsearch"
+  endpoint = "http://localhost:9200"
+  
+  [sinks.critical_sink.buffer]
+    type = "disk"
+    max_size = 1073741824  # 1 GB
+    when_full = "block"
+```
+
+<Steps>
+  <Step title="Choose buffer location">
+    Use fast storage (SSD) for buffer directories to minimize performance impact:
+    
+    ```toml
+    [sinks.my_sink.buffer]
+      type = "disk"
+      max_size = 268435456  # 256 MB
+    ```
+    
+    By default, Vector uses the system temp directory. Specify a custom location:
+    
+    ```toml
+    data_dir = "/var/lib/vector"
+    ```
+  </Step>
+  
+  <Step title="Size appropriately">
+    Calculate buffer size based on:
+    - Expected downtime duration
+    - Average event throughput
+    - Available disk space
+    
+    Example: For 1000 events/sec and 30 minutes of buffer:
+    ```
+    1000 events/sec * 1800 seconds * 1 KB/event = 1.8 GB
+    ```
+  </Step>
+  
+  <Step title="Monitor buffer usage">
+    Track buffer metrics to detect issues:
+    
+    ```toml
+    [sources.internal_metrics]
+      type = "internal_metrics"
+    ```
+  </Step>
+</Steps>
+
+## Retry Configuration
+
+Configure retry behavior for transient failures:
+
+```toml
+[sinks.http_with_retries]
+  type = "http"
+  uri = "https://api.example.com/logs"
+  encoding.codec = "json"
+  
+  # Retry configuration
+  request.retry_attempts = 5
+  request.retry_initial_backoff_secs = 1
+  request.retry_max_duration_secs = 300
+```
+
+### Exponential Backoff
+
+Vector automatically applies exponential backoff between retries:
+
+```
+Attempt 1: Wait 1 second
+Attempt 2: Wait 2 seconds
+Attempt 3: Wait 4 seconds
+Attempt 4: Wait 8 seconds
+Attempt 5: Wait 16 seconds
+```
+
+### Customizing Retry Logic
+
+```toml
+[sinks.custom_retries]
+  type = "http"
+  uri = "https://api.example.com/logs"
+  
+  # Conservative retry strategy
+  request.retry_attempts = 10
+  request.retry_initial_backoff_secs = 2
+  request.retry_max_duration_secs = 600
+  
+  # Timeout configuration
+  request.timeout_secs = 60
+```
+
+## Health Checks
+
+Health checks verify sink availability before sending data:
+
+```toml
+[sinks.elasticsearch]
+  type = "elasticsearch"
+  endpoint = "http://localhost:9200"
+  
+  # Health check configuration
+  healthcheck.enabled = true
+  healthcheck.uri = "http://localhost:9200/_cluster/health"
+```
+
+### Custom Health Checks
+
+```toml
+[sinks.http_with_health]
+  type = "http"
+  uri = "https://api.example.com/logs"
+  
+  # Custom health check endpoint
+  healthcheck.enabled = true
+  healthcheck.uri = "https://api.example.com/health"
+  healthcheck.interval_secs = 30
+```
+
+## Dead Letter Queues
+
+Handle events that repeatedly fail processing:
+
+```toml
+# Main processing transform
+[transforms.parse_logs]
+  type = "remap"
+  inputs = ["my_source"]
+  drop_on_error = false  # Don't drop failed events
+  reroute_dropped = true  # Send to dropped output
+  source = '''
+    .parsed = parse_json!(.message)
+  '''
+
+# Route failed events to dead letter queue
+[sinks.dead_letter_queue]
+  type = "file"
+  inputs = ["parse_logs.dropped"]
+  path = "/var/log/vector/dlq/%Y-%m-%d.log"
+  encoding.codec = "json"
+  
+  [sinks.dead_letter_queue.buffer]
+    type = "disk"
+    max_size = 1073741824  # 1 GB
+```
+
+### Dead Letter Queue Pattern
+
+<Steps>
+  <Step title="Capture failures">
+    Configure transforms to route failed events:
+    
+    ```coffee
+    # In VRL transform
+    .parsed, err = parse_json(.message)
+    
+    if err != null {
+      # Tag for dead letter queue
+      .dlq_reason = "json_parse_failed"
+      .dlq_error = string!(err)
+      .dlq_timestamp = now()
+      
+      # Route to DLQ
+      abort
+    }
+    ```
+  </Step>
+  
+  <Step title="Store failed events">
+    Write to durable storage:
+    
+    ```toml
+    [sinks.dlq_storage]
+      type = "aws_s3"
+      inputs = ["parse_logs.dropped"]
+      bucket = "my-logs-dlq"
+      compression = "gzip"
+      key_prefix = "dlq/%Y/%m/%d/"
+    ```
+  </Step>
+  
+  <Step title="Monitor and alert">
+    Track DLQ metrics:
+    
+    ```toml
+    [sinks.dlq_metrics]
+      type = "prometheus_exporter"
+      inputs = ["parse_logs.dropped"]
+    ```
+  </Step>
+</Steps>
+
+## Failure Handling Patterns
+
+### Pattern 1: Graceful Degradation
+
+```coffee
+# Try primary enrichment, fall back to defaults
+service_info, err = get_enrichment_table_record(
+  "services",
+  { "service_id": .service_id }
+)
+
+if err != null {
+  # Use defaults when enrichment fails
+  .service_name = "unknown"
+  .team = "default-team"
+  .enrichment_failed = true
+} else {
+  .service_name = service_info.name
+  .team = service_info.team
+}
+```
+
+### Pattern 2: Circuit Breaker
+
+```toml
+# Primary sink with circuit breaker behavior
+[sinks.primary]
+  type = "elasticsearch"
+  endpoint = "http://primary-es:9200"
+  
+  # Fail fast if health check fails
+  healthcheck.enabled = true
+  healthcheck.interval_secs = 10
+  
+  # Limited retries
+  request.retry_attempts = 3
+  request.timeout_secs = 10
+
+# Fallback sink
+[sinks.fallback]
+  type = "aws_s3"
+  inputs = ["my_source"]
+  bucket = "logs-backup"
+  compression = "gzip"
+```
+
+### Pattern 3: Multi-Path Delivery
+
+Send to multiple destinations for redundancy:
+
+```toml
+[sources.critical_logs]
+  type = "file"
+  include = ["/var/log/critical/*.log"]
+
+# Send to both destinations simultaneously
+[sinks.primary_destination]
+  type = "elasticsearch"
+  inputs = ["critical_logs"]
+  endpoint = "http://primary-es:9200"
+
+[sinks.backup_destination]
+  type = "aws_s3"
+  inputs = ["critical_logs"]
+  bucket = "critical-logs-backup"
+  
+  [sinks.backup_destination.buffer]
+    type = "disk"
+    max_size = 2147483648  # 2 GB
+```
+
+### Pattern 4: Sampling on Pressure
+
+```toml
+[transforms.adaptive_sampling]
+  type = "remap"
+  inputs = ["my_source"]
+  source = '''
+    # Sample at 10% when under pressure
+    if exists(.backpressure) && .backpressure == true {
+      if random_int(1, 10) != 1 {
+        abort  # Drop 90% of events
+      }
+      .sampled = true
+      .sample_rate = 0.1
+    }
+  '''
+```
+
+## Monitoring Reliability
+
+### Key Metrics
+
+Track these metrics to ensure reliability:
+
+```toml
+[sources.internal_metrics]
+  type = "internal_metrics"
+  namespace = "vector"
+
+[sinks.metrics_output]
+  type = "prometheus_exporter"
+  inputs = ["internal_metrics"]
+  address = "0.0.0.0:9598"
+```
+
+**Critical metrics:**
+
+- `component_sent_events_total`: Events successfully delivered
+- `component_sent_event_bytes_total`: Bytes successfully delivered
+- `component_errors_total`: Errors encountered
+- `component_discarded_events_total`: Events dropped
+- `buffer_events`: Current buffer size
+- `buffer_byte_size`: Buffer memory/disk usage
+- `buffer_received_events_total`: Events entering buffer
+- `buffer_sent_events_total`: Events leaving buffer
+
+### Alerting on Reliability Issues
+
+<Steps>
+  <Step title="High error rate">
+    Alert when error rate exceeds threshold:
+    
+    ```promql
+    rate(component_errors_total[5m]) > 10
+    ```
+  </Step>
+  
+  <Step title="Buffer saturation">
+    Alert when buffers fill up:
+    
+    ```promql
+    (buffer_events / buffer_max_events) > 0.8
+    ```
+  </Step>
+  
+  <Step title="Delivery lag">
+    Alert when delivery lags behind ingestion:
+    
+    ```promql
+    rate(buffer_received_events_total[5m]) - rate(buffer_sent_events_total[5m]) > 1000
+    ```
+  </Step>
+  
+  <Step title="Event loss">
+    Alert when events are discarded:
+    
+    ```promql
+    increase(component_discarded_events_total[5m]) > 0
+    ```
+  </Step>
+</Steps>
+
+## High Availability Deployments
+
+### Active-Active Configuration
+
+Deploy multiple Vector instances for redundancy:
+
+```yaml
+# Kubernetes DaemonSet for edge agents
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vector-agent
+spec:
+  selector:
+    matchLabels:
+      app: vector-agent
+  template:
+    metadata:
+      labels:
+        app: vector-agent
+    spec:
+      containers:
+      - name: vector
+        image: timberio/vector:latest
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+---
+# Aggregator deployment with multiple replicas
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vector-aggregator
+spec:
+  replicas: 3  # Multiple instances for HA
+  selector:
+    matchLabels:
+      app: vector-aggregator
+  template:
+    metadata:
+      labels:
+        app: vector-aggregator
+    spec:
+      containers:
+      - name: vector
+        image: timberio/vector:latest
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "2000m"
+```
+
+### Load Balancing
+
+```toml
+# Edge agent sends to multiple aggregators
+[sinks.to_aggregators]
+  type = "vector"
+  inputs = ["my_source"]
+  
+  # Multiple aggregator endpoints
+  address = [
+    "aggregator-1.example.com:9000",
+    "aggregator-2.example.com:9000",
+    "aggregator-3.example.com:9000"
+  ]
+  
+  # Load balancing strategy
+  load_balance = "round_robin"
+  
+  [sinks.to_aggregators.buffer]
+    type = "disk"
+    max_size = 1073741824  # 1 GB
+```
+
+## Disaster Recovery
+
+### Backup and Restore
+
+<Steps>
+  <Step title="Backup configuration">
+    Store Vector configurations in version control:
+    
+    ```bash
+    git add vector.toml
+    git commit -m "Update Vector configuration"
+    git push
+    ```
+  </Step>
+  
+  <Step title="Backup buffer data">
+    For disk buffers, back up the data directory:
+    
+    ```bash
+    tar -czf vector-buffers-backup.tar.gz /var/lib/vector/
+    ```
+  </Step>
+  
+  <Step title="Document recovery procedures">
+    Create runbooks for common failure scenarios:
+    - Aggregator failure
+    - Sink destination outage
+    - Network partition
+    - Disk full scenarios
+  </Step>
+</Steps>
+
+### Recovery Testing
+
+Regularly test failure scenarios:
+
+```bash
+# Test sink failure
+# Stop downstream service
+sudo systemctl stop elasticsearch
+
+# Verify buffering
+curl http://localhost:8686/metrics | grep buffer_events
+
+# Restart service
+sudo systemctl start elasticsearch
+
+# Verify drain
+watch 'curl -s http://localhost:8686/metrics | grep buffer_events'
+```
+
+## Best Practices
+
+1. **Enable acknowledgments**: For critical data, always enable acknowledgments
+2. **Use disk buffers**: Protect against data loss during restarts
+3. **Size buffers appropriately**: Balance durability with resource constraints
+4. **Monitor continuously**: Track delivery metrics and alert on anomalies
+5. **Test failure scenarios**: Regularly verify failure handling works as expected
+6. **Document guarantees**: Clearly define delivery guarantees for each pipeline
+7. **Plan for disasters**: Have runbooks and recovery procedures ready
+8. **Use dead letter queues**: Isolate and investigate persistent failures
+9. **Configure retries wisely**: Balance retry attempts with downstream capacity
+10. **Deploy redundantly**: Use multiple instances for high availability
+
+## Troubleshooting Reliability Issues
+
+### Data Loss Investigation
+
+<Steps>
+  <Step title="Check acknowledgments">
+    Verify acknowledgments are enabled:
+    
+    ```bash
+    vector config check /etc/vector/vector.toml
+    ```
+  </Step>
+  
+  <Step title="Review logs">
+    Check Vector logs for errors:
+    
+    ```bash
+    journalctl -u vector -n 1000 | grep -i error
+    ```
+  </Step>
+  
+  <Step title="Examine metrics">
+    Compare input and output event counts:
+    
+    ```bash
+    curl -s http://localhost:8686/metrics | \
+      grep -E 'component_(received|sent)_events_total'
+    ```
+  </Step>
+  
+  <Step title="Check buffer overflow">
+    Look for dropped events:
+    
+    ```bash
+    curl -s http://localhost:8686/metrics | \
+      grep component_discarded_events_total
+    ```
+  </Step>
+</Steps>
+
+### Performance Degradation
+
+- **Symptom**: Increasing buffer sizes
+- **Causes**: Downstream slowness, insufficient concurrency, network issues
+- **Solutions**: Increase concurrency, add more sinks, optimize transforms
+
+With proper configuration and monitoring, Vector provides robust reliability guarantees for your observability data, ensuring critical information reaches its destination safely and efficiently.

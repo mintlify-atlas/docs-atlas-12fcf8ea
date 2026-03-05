@@ -1,0 +1,324 @@
+---
+title: Vector Remap Language (VRL) Overview
+description: Understanding VRL - Vector's domain-specific language for transforming observability data
+---
+
+## What is VRL?
+
+Vector Remap Language (VRL) is an expression-oriented, domain-specific language designed specifically for transforming observability data (logs, metrics, and traces) within Vector. VRL provides a safe, performant, and intuitive way to manipulate your data pipeline events.
+
+## Key Characteristics
+
+### Expression-Oriented
+
+VRL is fundamentally expression-oriented - every statement in VRL is an expression that returns a value. This makes the language predictable and composable:
+
+```vrl
+# Each line is an expression that returns a value
+.status_code = 200
+.message = downcase(.message)
+.timestamp = now()
+```
+
+### Type Safety
+
+VRL includes compile-time type checking to catch errors before your pipeline runs. The compiler analyzes your VRL programs and ensures type compatibility:
+
+```vrl
+# Compile error: cannot add string to integer
+.result = .status_code + "abc"  # ❌
+
+# Correct: coerce to string first
+.result = to_string(.status_code) + "abc"  # ✅
+```
+
+### Safety First
+
+VRL is designed with safety as a core principle:
+
+- **Fail-safe**: Programs won't crash your pipeline
+- **Memory safe**: Built on Rust's memory safety guarantees
+- **Ergonomic error handling**: Explicit handling of fallible operations
+- **No infinite loops**: No unbounded iteration constructs
+
+### High Performance
+
+VRL is compiled to efficient bytecode and optimized for observability workloads:
+
+- Compiled ahead of time for each transform
+- Zero-copy operations where possible
+- Optimized for event transformation patterns
+- Minimal runtime overhead
+
+## Core Concepts
+
+### Events
+
+VRL programs operate on a single event at a time. An event is represented by the special `.` (dot) variable, which refers to the current event being processed:
+
+```vrl
+# Access event fields
+.message
+.status_code
+.metadata.timestamp
+
+# Modify the entire event
+. = parse_json!(.message)
+```
+
+### Paths
+
+Paths are used to access and modify fields within events. They use dot notation for object fields and bracket notation for array elements:
+
+```vrl
+# Object field access
+.user.name
+.http.request.headers
+
+# Array element access
+.tags[0]
+.metrics[2].value
+
+# Dynamic field access
+.metadata["custom-header"]
+```
+
+### Variables
+
+Variables store intermediate values and are scoped to the VRL program:
+
+```vrl
+# Assign to variable
+message = .message
+status = .status_code
+
+# Use in expressions
+.result = message + " - Status: " + to_string(status)
+```
+
+### Fallibility
+
+Many operations in VRL are fallible - they can succeed or fail. VRL requires explicit handling of failures:
+
+```vrl
+# Infallible version (! suffix) - aborts on error
+.parsed = parse_json!(.message)
+
+# Fallible version - returns error that must be handled
+.parsed, err = parse_json(.message)
+if err == null {
+  .success = true
+} else {
+  .error_message = err
+}
+
+# Coalescing operator - use default on error
+.parsed = parse_json(.message) ?? {}
+```
+
+## VRL Type System
+
+VRL supports the following types:
+
+- **string**: UTF-8 encoded text (`"hello"`, `s'raw string'`)
+- **integer**: Whole numbers (`42`, `-100`)
+- **float**: Floating-point numbers (`3.14`, `-0.5`)
+- **boolean**: True or false (`true`, `false`)
+- **timestamp**: RFC 3339 timestamps (`t'2021-03-01T19:00:00Z'`)
+- **null**: Null value (`null`)
+- **array**: Ordered collection (`[1, 2, 3]`)
+- **object**: Key-value map (`{"key": "value"}`)
+- **regex**: Regular expression (compiled at compile-time)
+
+## Where VRL is Used
+
+VRL is primarily used in Vector through:
+
+### Remap Transform
+
+The `remap` transform is where most VRL programs execute. It allows you to transform events:
+
+```yaml
+transforms:
+  process_logs:
+    type: remap
+    inputs:
+      - my_source
+    source: |
+      .timestamp = now()
+      .level = downcase(.severity)
+      del(.internal_field)
+```
+
+### Filter Transform
+
+VRL expressions create conditions for filtering events:
+
+```yaml
+transforms:
+  filter_errors:
+    type: filter
+    inputs:
+      - logs
+    condition: '.severity == "error" && exists(.user_id)'
+```
+
+### Route Transform
+
+VRL expressions route events to different outputs:
+
+```yaml
+transforms:
+  route_by_level:
+    type: route
+    inputs:
+      - logs
+    route:
+      error: '.level == "error"'
+      info: '.level == "info"'
+```
+
+## Language Features
+
+### Compilation
+
+VRL programs are compiled when Vector starts, catching errors before processing any events:
+
+- Syntax errors detected immediately
+- Type errors caught at compile time
+- Undefined function/field warnings
+- Performance optimizations applied
+
+### Error Handling
+
+VRL provides multiple ways to handle errors:
+
+```vrl
+# Abort on error (! suffix)
+.result = parse_json!(.message)
+
+# Capture error for handling
+.result, err = parse_json(.message)
+
+# Provide default value (?? operator)
+.result = parse_json(.message) ?? {}
+
+# Only assign if successful (??= operator)
+.result ??= parse_json(.message)
+```
+
+### String Interpolation
+
+VRL supports template strings with variable interpolation:
+
+```vrl
+user = "Alice"
+status = "active"
+.message = "User {{ user }} is {{ status }}"
+# Result: "User Alice is active"
+```
+
+### Iteration Support
+
+VRL provides functions for iterating over collections:
+
+```vrl
+# Map over array values
+.numbers = map_values([1, 2, 3]) -> |v| { v * 2 }
+# Result: [2, 4, 6]
+
+# Map over object keys
+.uppercased = map_keys({"name": "alice"}) -> |k| { upcase(k) }
+# Result: {"NAME": "alice"}
+
+# Iterate with side effects
+for_each(array!(.tags)) -> |_index, value| {
+  log("Tag: " + value, level: "info")
+}
+```
+
+### Control Flow
+
+VRL supports conditional logic:
+
+```vrl
+# If/else expressions
+.level = if .status_code >= 500 {
+  "error"
+} else if .status_code >= 400 {
+  "warning"
+} else {
+  "info"
+}
+
+# Early return
+if .environment != "production" {
+  return .
+}
+
+# Abort processing
+if .spam_score > 0.9 {
+  abort
+}
+```
+
+## Why VRL?
+
+### Purpose-Built for Observability
+
+VRL is designed specifically for observability data transformation:
+
+- Built-in functions for common log/metric operations
+- Native support for parsing formats (JSON, syslog, CEF, etc.)
+- Optimized for high-throughput data pipelines
+- Understanding of observability data types
+
+### Alternative to General-Purpose Languages
+
+Unlike embedding Lua, JavaScript, or Python:
+
+- **Faster**: Compiled and optimized for event transformation
+- **Safer**: No segfaults, memory leaks, or crashes
+- **Simpler**: Domain-specific operations built-in
+- **Predictable**: No hidden costs or unbounded operations
+
+### Production Ready
+
+VRL is battle-tested in production environments:
+
+- Used by thousands of Vector deployments
+- Handles millions of events per second
+- Comprehensive test suite
+- Extensive real-world validation
+
+## Getting Started
+
+To start using VRL:
+
+1. **Try the VRL REPL**: Run `vector vrl` to experiment with VRL interactively
+2. **Use the online playground**: Visit [playground.vrl.dev](https://playground.vrl.dev)
+3. **Read the function reference**: Explore the 200+ built-in functions
+4. **Study examples**: See real-world VRL programs in action
+
+## Learn More
+
+- [VRL Functions Reference](/reference/vrl/functions) - Complete list of built-in functions
+- [VRL Expressions](/reference/vrl/expressions) - Syntax and operators
+- [VRL Examples](/reference/vrl/examples) - Real-world transformation examples
+- [Remap Transform](/sources) - Using VRL in Vector configuration
+
+## Additional Resources
+
+- **VRL Playground**: [playground.vrl.dev](https://playground.vrl.dev) - Test VRL online
+- **Vector Blog**: [VRL Announcement Post](https://vector.dev/blog/vector-remap-language)
+- **GitHub**: [Vector source code](https://github.com/vectordotdev/vector)
+- **Discord**: Join the Vector community for VRL help
+
+## Next Steps
+
+Now that you understand VRL basics, explore:
+
+- **Function categories**: String, Parse, Coerce, Encode, Array, Object manipulation
+- **Error handling patterns**: Graceful degradation and fallback strategies  
+- **Performance optimization**: Writing efficient VRL programs
+- **Testing strategies**: Validating VRL programs before deployment

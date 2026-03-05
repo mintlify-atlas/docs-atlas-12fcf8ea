@@ -1,0 +1,491 @@
+---
+title: Deployment Topologies
+description: Common Vector deployment architecture patterns
+---
+
+Vector supports multiple deployment topologies to fit different infrastructure needs, scale requirements, and operational constraints.
+
+## Topology Patterns
+
+### 1. Direct-to-Sink (Simple)
+
+The simplest topology where Vector agents send data directly to final destinations.
+
+```
+┌─────────────┐
+│   Host 1    │
+│  ┌────────┐ │
+│  │ Agent  │─┼────┐
+│  └────────┘ │    │
+└─────────────┘    │
+                   ▼
+┌─────────────┐    ┌─────────────────┐
+│   Host 2    │    │                 │
+│  ┌────────┐ │───▶│  Elasticsearch  │
+│  │ Agent  │ │    │                 │
+│  └────────┘ │    └─────────────────┘
+└─────────────┘    ▲
+                   │
+┌─────────────┐    │
+│   Host 3    │    │
+│  ┌────────┐ │────┘
+│  │ Agent  │ │
+│  └────────┘ │
+└─────────────┘
+```
+
+**Use Cases:**
+- Small deployments (less than 50 hosts)
+- Simple data pipelines
+- Direct cloud service integration
+- Development/testing environments
+
+**Pros:**
+- Simple to set up and maintain
+- Low latency
+- No additional infrastructure needed
+
+**Cons:**
+- No centralized processing
+- Each agent needs credentials to destinations
+- Difficult to update transformation logic
+- Limited buffering capacity
+
+**Example Agent Configuration:**
+
+```yaml
+sources:
+  logs:
+    type: file
+    include: ["/var/log/**/*.log"]
+
+transforms:
+  parse:
+    type: remap
+    inputs: ["logs"]
+    source: |
+      . = parse_syslog!(.message)
+
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs: ["parse"]
+    endpoint: "https://elasticsearch.example.com"
+    auth:
+      strategy: basic
+      user: "${ELASTICSEARCH_USER}"
+      password: "${ELASTICSEARCH_PASSWORD}"
+```
+
+### 2. Centralized Aggregation
+
+Agents forward data to central aggregators that perform processing and routing.
+
+```
+┌─────────────┐
+│   Host 1    │
+│  ┌────────┐ │
+│  │ Agent  │─┼──┐
+│  └────────┘ │  │
+└─────────────┘  │
+                 │
+┌─────────────┐  │     ┌──────────────┐
+│   Host 2    │  │     │              │
+│  ┌────────┐ │  ├────▶│ Aggregator 1 │──┐
+│  │ Agent  │─┼──┤     │              │  │
+│  └────────┘ │  │     └──────────────┘  │
+└─────────────┘  │                       │
+                 │     ┌──────────────┐  │     ┌─────────────────┐
+┌─────────────┐  │     │              │  ├────▶│  Elasticsearch  │
+│   Host 3    │  ├────▶│ Aggregator 2 │──┤     └─────────────────┘
+│  ┌────────┐ │  │     │              │  │
+│  │ Agent  │─┼──┘     └──────────────┘  │     ┌─────────────────┐
+│  └────────┘ │                          └────▶│       S3        │
+└─────────────┘                                 └─────────────────┘
+```
+
+**Use Cases:**
+- Medium to large deployments (50-1000s of hosts)
+- Complex transformation requirements
+- Multiple destination routing
+- Centralized credential management
+- Data enrichment needs
+
+**Pros:**
+- Centralized processing and routing logic
+- Single credential management point
+- Better buffering and backpressure handling
+- Easier to update transformation logic
+- Can aggregate data before forwarding
+
+**Cons:**
+- Additional infrastructure to manage
+- Potential single point of failure (mitigate with multiple aggregators)
+- Additional network hop adds latency
+
+**Agent Configuration:**
+
+```yaml
+sources:
+  logs:
+    type: file
+    include: ["/var/log/**/*.log"]
+  
+  host_metrics:
+    type: host_metrics
+
+sinks:
+  to_aggregator:
+    type: vector
+    inputs: ["logs", "host_metrics"]
+    address: "aggregator.example.com:6000"
+    version: "2"
+```
+
+**Aggregator Configuration:**
+
+```yaml
+sources:
+  from_agents:
+    type: vector
+    address: "0.0.0.0:6000"
+    version: "2"
+
+transforms:
+  parse_and_enrich:
+    type: remap
+    inputs: ["from_agents"]
+    source: |
+      . = parse_json!(.message)
+      .environment = "production"
+      .processed_at = now()
+  
+  route_by_type:
+    type: route
+    inputs: ["parse_and_enrich"]
+    route:
+      logs: '.type == "log"'
+      metrics: '.type == "metric"'
+
+sinks:
+  logs_to_elasticsearch:
+    type: elasticsearch
+    inputs: ["route_by_type.logs"]
+    endpoint: "https://elasticsearch.example.com"
+  
+  metrics_to_prometheus:
+    type: prometheus_remote_write
+    inputs: ["route_by_type.metrics"]
+    endpoint: "https://prometheus.example.com/api/v1/write"
+  
+  archive_to_s3:
+    type: aws_s3
+    inputs: ["parse_and_enrich"]
+    bucket: "log-archive"
+    compression: gzip
+```
+
+### 3. Hierarchical / Multi-Tier
+
+Multiple layers of aggregation for very large or geographically distributed deployments.
+
+```
+       Region 1                    Region 2
+┌──────────────────┐      ┌──────────────────┐
+│                  │      │                  │
+│ ┌──┐ ┌──┐ ┌──┐  │      │ ┌──┐ ┌──┐ ┌──┐  │
+│ │A1│ │A2│ │A3│  │      │ │A4│ │A5│ │A6│  │
+│ └┬─┘ └┬─┘ └┬─┘  │      │ └┬─┘ └┬─┘ └┬─┘  │
+│  └────┴────┘    │      │  └────┴────┘    │
+│       │         │      │       │         │
+│  ┌────▼────┐    │      │  ┌────▼────┐    │
+│  │Regional │    │      │  │Regional │    │
+│  │  Agg 1  │    │      │  │  Agg 2  │    │
+│  └────┬────┘    │      │  └────┬────┘    │
+└───────┼─────────┘      └───────┼─────────┘
+        │                        │
+        └────────┬───────────────┘
+                 ▼
+        ┌─────────────────┐
+        │     Central     │
+        │   Aggregator    │
+        └────────┬────────┘
+                 │
+        ┌────────┴────────┐
+        ▼                 ▼
+  ┌──────────┐      ┌──────────┐
+  │   Sink   │      │   Sink   │
+  └──────────┘      └──────────┘
+```
+
+**Use Cases:**
+- Very large deployments (1000s+ hosts)
+- Geographically distributed infrastructure
+- Multi-region cloud deployments
+- Compliance requirements (regional data processing)
+- Network bandwidth optimization
+
+**Pros:**
+- Scales to very large deployments
+- Reduces cross-region bandwidth
+- Regional data processing for compliance
+- Fault isolation by region
+- Can aggregate before central processing
+
+**Cons:**
+- Most complex to set up and maintain
+- Higher operational overhead
+- More points of potential failure
+
+**Regional Aggregator Configuration:**
+
+```yaml
+sources:
+  from_local_agents:
+    type: vector
+    address: "0.0.0.0:6000"
+    version: "2"
+
+transforms:
+  add_region:
+    type: remap
+    inputs: ["from_local_agents"]
+    source: |
+      .region = "us-west-2"
+  
+  # Regional filtering/sampling
+  sample:
+    type: sample
+    inputs: ["add_region"]
+    rate: 5
+
+sinks:
+  to_central:
+    type: vector
+    inputs: ["sample"]
+    address: "central-aggregator.example.com:6000"
+    version: "2"
+  
+  # Regional archive
+  regional_archive:
+    type: aws_s3
+    inputs: ["add_region"]
+    bucket: "logs-us-west-2"
+    region: "us-west-2"
+```
+
+### 4. Stream Processing (Kafka/Pulsar Integration)
+
+Vector as part of a streaming data pipeline.
+
+```
+┌─────────┐     ┌─────────┐     ┌──────────┐     ┌─────────┐
+│ Agent 1 │────▶│         │────▶│          │────▶│  Sink   │
+└─────────┘     │  Kafka  │     │  Vector  │     └─────────┘
+┌─────────┐     │    /    │     │  Stream  │     ┌─────────┐
+│ Agent 2 │────▶│ Pulsar  │────▶│Processor │────▶│  Sink   │
+└─────────┘     │         │     │          │     └─────────┘
+┌─────────┐     └─────────┘     └──────────┘     ┌─────────┐
+│ Agent 3 │────▶                                  │  Sink   │
+└─────────┘                                       └─────────┘
+```
+
+**Use Cases:**
+- Event-driven architectures
+- Multiple consumers of same data
+- Replay/reprocessing requirements
+- Integration with existing Kafka infrastructure
+- High-throughput streaming pipelines
+
+**Pros:**
+- Decouples producers from consumers
+- Enables multiple consumers
+- Built-in persistence and replay
+- Very high throughput
+- Strong ordering guarantees
+
+**Cons:**
+- Requires Kafka/Pulsar infrastructure
+- Added complexity
+- Additional latency
+- More components to monitor
+
+**Agent to Kafka:**
+
+```yaml
+sources:
+  logs:
+    type: file
+    include: ["/var/log/**/*.log"]
+
+sinks:
+  to_kafka:
+    type: kafka
+    inputs: ["logs"]
+    bootstrap_servers: "kafka.example.com:9092"
+    topic: "logs-raw"
+    encoding:
+      codec: json
+```
+
+**Vector Stream Processor from Kafka:**
+
+```yaml
+sources:
+  from_kafka:
+    type: kafka
+    bootstrap_servers: "kafka.example.com:9092"
+    topics: ["logs-raw"]
+    group_id: "vector-processor"
+
+transforms:
+  process:
+    type: remap
+    inputs: ["from_kafka"]
+    source: |
+      . = parse_json!(.message)
+      .processed = true
+
+sinks:
+  to_elasticsearch:
+    type: elasticsearch
+    inputs: ["process"]
+    endpoint: "https://elasticsearch.example.com"
+  
+  to_s3:
+    type: aws_s3
+    inputs: ["process"]
+    bucket: "processed-logs"
+```
+
+### 5. Edge Collection with Cloud Aggregation
+
+Hybrid topology for edge computing scenarios.
+
+```
+    Edge Location 1              Edge Location 2
+┌─────────────────────┐    ┌─────────────────────┐
+│  ┌──┐  ┌──┐  ┌──┐   │    │  ┌──┐  ┌──┐  ┌──┐   │
+│  │A1│  │A2│  │A3│   │    │  │A4│  │A5│  │A6│   │
+│  └┬─┘  └┬─┘  └┬─┘   │    │  └┬─┘  └┬─┘  └┬─┘   │
+│   └─────┴─────┘     │    │   └─────┴─────┘     │
+│         │           │    │         │           │
+│    ┌────▼────┐      │    │    ┌────▼────┐      │
+│    │  Edge   │      │    │    │  Edge   │      │
+│    │  Agg    │      │    │    │  Agg    │      │
+│    └────┬────┘      │    │    └────┬────┘      │
+└─────────┼───────────┘    └─────────┼───────────┘
+          │                          │
+          └──────────┬───────────────┘
+                     │ (Internet)
+                     ▼
+            ┌─────────────────┐
+            │  Cloud Central  │
+            │   Aggregator    │
+            └────────┬────────┘
+                     ▼
+            ┌─────────────────┐
+            │   Cloud Sinks   │
+            └─────────────────┘
+```
+
+**Use Cases:**
+- IoT deployments
+- Retail/branch office scenarios
+- Edge computing infrastructure
+- Limited or intermittent connectivity
+- Local processing requirements
+
+**Edge Aggregator Configuration:**
+
+```yaml
+sources:
+  from_local_agents:
+    type: vector
+    address: "0.0.0.0:6000"
+    version: "2"
+
+transforms:
+  # Local filtering to reduce bandwidth
+  filter:
+    type: filter
+    inputs: ["from_local_agents"]
+    condition: '.level != "debug"'
+  
+  # Local aggregation
+  aggregate_metrics:
+    type: aggregate
+    inputs: ["filter"]
+    interval_ms: 60000
+
+sinks:
+  # Forward to cloud with buffering for connectivity issues
+  to_cloud:
+    type: vector
+    inputs: ["aggregate_metrics"]
+    address: "cloud-aggregator.example.com:6000"
+    version: "2"
+    buffer:
+      type: disk
+      max_size: 10737418240  # 10GB
+  
+  # Local backup
+  local_archive:
+    type: file
+    inputs: ["filter"]
+    path: "/var/log/vector/archive-%Y-%m-%d.log"
+    encoding:
+      codec: json
+```
+
+## Topology Selection Guide
+
+| Factor | Direct | Centralized | Hierarchical | Stream | Edge |
+|--------|--------|-------------|--------------|--------|------|
+| **Scale** | Less than 50 hosts | 50-1000 hosts | 1000+ hosts | Any | Edge + Cloud |
+| **Complexity** | Low | Medium | High | High | High |
+| **Processing** | Distributed | Centralized | Multi-tier | Decoupled | Local + Central |
+| **Latency** | Lowest | Low | Medium | Higher | Variable |
+| **Cost** | Lowest | Medium | Higher | Highest | Medium |
+| **Maintenance** | Easy | Moderate | Complex | Complex | Complex |
+
+## Best Practices
+
+### High Availability
+
+- Deploy multiple aggregator instances with load balancing
+- Use DNS-based discovery with multiple A records
+- Configure appropriate health checks
+- Implement circuit breakers and retry logic
+
+### Monitoring
+
+- Enable internal metrics on all Vector instances
+- Monitor queue depths and buffer utilization
+- Track end-to-end latency
+- Set up alerts for component failures
+- Use distributed tracing for complex pipelines
+
+### Security
+
+- Use TLS for all network communication
+- Implement authentication between components
+- Use network segmentation and firewalls
+- Rotate credentials regularly
+- Apply principle of least privilege
+
+### Performance
+
+- Size aggregators based on expected throughput
+- Use persistent storage for stateful operations
+- Configure appropriate buffer sizes
+- Enable batching and compression
+- Monitor and tune resource allocation
+
+### Reliability
+
+- Enable disk buffers on agents for aggregator failures
+- Use acknowledgments for critical data
+- Implement dead-letter queues for processing failures
+- Set up monitoring and alerting
+- Test failover scenarios regularly

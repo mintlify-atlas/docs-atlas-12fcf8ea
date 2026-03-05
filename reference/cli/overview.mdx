@@ -1,0 +1,349 @@
+---
+title: CLI Overview
+description: Vector command-line interface reference
+---
+
+Vector provides a powerful command-line interface for running, testing, and managing your observability pipeline.
+
+## Basic Usage
+
+```bash
+vector [OPTIONS] [COMMAND]
+```
+
+When run without a subcommand, Vector starts in daemon mode and processes data according to your configuration.
+
+## Global Options
+
+These options apply to all commands and control Vector's runtime behavior:
+
+### Configuration
+
+<ParamField path="-c, --config" type="string[]">
+  Read configuration from one or more files. Wildcard paths are supported. File format is detected from the file name.
+  
+  ```bash
+  vector --config /etc/vector/vector.yaml
+  vector --config "/etc/vector/*.yaml"
+  vector -c config1.yaml,config2.yaml
+  ```
+  
+  Environment: `VECTOR_CONFIG`
+</ParamField>
+
+<ParamField path="-C, --config-dir" type="string[]">
+  Read configuration from files in one or more directories. Files not ending in `.toml`, `.json`, `.yaml`, or `.yml` are ignored.
+  
+  ```bash
+  vector --config-dir /etc/vector/conf.d/
+  ```
+  
+  Environment: `VECTOR_CONFIG_DIR`
+</ParamField>
+
+<ParamField path="--config-toml" type="string[]">
+  Read configuration from TOML files.
+  
+  ```bash
+  vector --config-toml vector.toml
+  ```
+  
+  Environment: `VECTOR_CONFIG_TOML`
+</ParamField>
+
+<ParamField path="--config-json" type="string[]">
+  Read configuration from JSON files.
+  
+  ```bash
+  vector --config-json vector.json
+  ```
+  
+  Environment: `VECTOR_CONFIG_JSON`
+</ParamField>
+
+<ParamField path="--config-yaml" type="string[]">
+  Read configuration from YAML files.
+  
+  ```bash
+  vector --config-yaml vector.yaml
+  ```
+  
+  Environment: `VECTOR_CONFIG_YAML`
+</ParamField>
+
+### Runtime Options
+
+<ParamField path="-t, --threads" type="integer">
+  Number of threads to use for processing. Defaults to the number of available CPU cores.
+  
+  ```bash
+  vector --threads 4
+  ```
+  
+  Environment: `VECTOR_THREADS`
+</ParamField>
+
+<ParamField path="-r, --require-healthy" type="boolean">
+  Exit on startup if any sinks fail healthchecks.
+  
+  ```bash
+  vector --require-healthy
+  ```
+  
+  Environment: `VECTOR_REQUIRE_HEALTHY`
+</ParamField>
+
+<ParamField path="-w, --watch-config" type="boolean">
+  Watch for changes in configuration files and reload accordingly.
+  
+  ```bash
+  vector --watch-config
+  ```
+  
+  Environment: `VECTOR_WATCH_CONFIG`
+</ParamField>
+
+<ParamField path="--watch-config-method" type="string">
+  Method for configuration watching: `recommended` or `poll`. Defaults to `recommended` (uses inotify on Linux, kqueue on macOS). Use `poll` for network filesystems like NFS.
+  
+  ```bash
+  vector --watch-config --watch-config-method poll
+  ```
+  
+  Environment: `VECTOR_WATCH_CONFIG_METHOD`
+</ParamField>
+
+<ParamField path="--watch-config-poll-interval-seconds" type="integer">
+  Poll interval in seconds when using `poll` watch method. Default: 30 seconds.
+  
+  ```bash
+  vector --watch-config --watch-config-method poll --watch-config-poll-interval-seconds 60
+  ```
+  
+  Environment: `VECTOR_WATCH_CONFIG_POLL_INTERVAL_SECONDS`
+</ParamField>
+
+### Logging Options
+
+<ParamField path="-v, --verbose" type="flag">
+  Enable more detailed internal logging. Can be repeated to increase level.
+  
+  ```bash
+  vector -v        # Debug level
+  vector -vv       # Trace level
+  ```
+  
+  Levels: `-v` = debug, `-vv` = trace
+</ParamField>
+
+<ParamField path="-q, --quiet" type="flag">
+  Reduce detail of internal logging. Repeat to reduce further. Overrides `--verbose`.
+  
+  ```bash
+  vector -q        # Warn level
+  vector -qq       # Error level
+  vector -qqq      # Off
+  ```
+  
+  Levels: `-q` = warn, `-qq` = error, `-qqq` = off
+</ParamField>
+
+<ParamField path="--log-format" type="string">
+  Set the logging format: `text` or `json`. Default: `text`.
+  
+  ```bash
+  vector --log-format json
+  ```
+  
+  Environment: `VECTOR_LOG_FORMAT`
+</ParamField>
+
+<ParamField path="--color" type="string">
+  Control ANSI terminal formatting: `auto`, `always`, or `never`. Default: `auto`.
+  
+  ```bash
+  vector --color always
+  ```
+  
+  Environment: `VECTOR_COLOR`
+</ParamField>
+
+<ParamField path="-l, --internal-log-rate-limit" type="integer">
+  Set the internal log rate limit in seconds. Default: 10 seconds.
+  
+  ```bash
+  vector --internal-log-rate-limit 60
+  ```
+  
+  Environment: `VECTOR_INTERNAL_LOG_RATE_LIMIT`
+</ParamField>
+
+### Shutdown Options
+
+<ParamField path="--graceful-shutdown-limit-secs" type="integer">
+  Duration in seconds to wait for graceful shutdown after SIGINT or SIGTERM. Default: 60 seconds.
+  
+  ```bash
+  vector --graceful-shutdown-limit-secs 120
+  ```
+  
+  Environment: `VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS`
+</ParamField>
+
+<ParamField path="--no-graceful-shutdown-limit" type="boolean">
+  Never time out while waiting for graceful shutdown. Vector will attempt to send data until terminated by SIGKILL.
+  
+  ```bash
+  vector --no-graceful-shutdown-limit
+  ```
+  
+  Environment: `VECTOR_NO_GRACEFUL_SHUTDOWN_LIMIT`
+</ParamField>
+
+### Advanced Options
+
+<ParamField path="--disable-env-var-interpolation" type="boolean">
+  Disable interpolation of environment variables in configuration files.
+  
+  ```bash
+  vector --disable-env-var-interpolation
+  ```
+  
+  Environment: `VECTOR_DISABLE_ENV_VAR_INTERPOLATION`
+</ParamField>
+
+<ParamField path="--openssl-no-probe" type="boolean">
+  Disable probing and configuration of root certificate locations for OpenSSL. Useful when using the `exec` source.
+  
+  ```bash
+  vector --openssl-no-probe
+  ```
+  
+  Environment: `VECTOR_OPENSSL_NO_PROBE`
+</ParamField>
+
+<ParamField path="--allow-empty-config" type="boolean">
+  Allow the configuration to run without any components. Useful with `--watch-config` for dynamic configuration loading.
+  
+  ```bash
+  vector --allow-empty-config --watch-config
+  ```
+  
+  Environment: `VECTOR_ALLOW_EMPTY_CONFIG`
+</ParamField>
+
+## Available Commands
+
+Vector provides several subcommands for different operations:
+
+<CardGroup cols={2}>
+  <Card title="validate" icon="check" href="/reference/cli/commands#validate">
+    Validate configuration files
+  </Card>
+  <Card title="test" icon="flask" href="/reference/cli/commands#test">
+    Run unit tests for your configuration
+  </Card>
+  <Card title="graph" icon="diagram-project" href="/reference/cli/commands#graph">
+    Output topology as visual representation
+  </Card>
+  <Card title="top" icon="chart-line" href="/reference/cli/commands#top">
+    Display topology and metrics in real-time
+  </Card>
+  <Card title="generate" icon="wand-magic-sparkles" href="/reference/cli/commands#generate">
+    Generate configuration from templates
+  </Card>
+  <Card title="list" icon="list" href="/reference/cli/commands#list">
+    List available components
+  </Card>
+  <Card title="convert-config" icon="arrows-rotate" href="/reference/cli/commands#convert-config">
+    Convert configuration between formats
+  </Card>
+</CardGroup>
+
+## Examples
+
+### Start Vector with Configuration
+
+```bash
+vector --config /etc/vector/vector.yaml
+```
+
+### Start with Multiple Configs
+
+```bash
+vector --config sources.yaml --config sinks.yaml
+```
+
+### Run with Debug Logging
+
+```bash
+vector -v --config vector.yaml
+```
+
+### Watch Configuration for Changes
+
+```bash
+vector --watch-config --config /etc/vector/vector.yaml
+```
+
+### Run with Custom Thread Count
+
+```bash
+vector --threads 8 --config vector.yaml
+```
+
+### Require Healthy Sinks on Startup
+
+```bash
+vector --require-healthy --config vector.yaml
+```
+
+## Exit Codes
+
+Vector uses standard exit codes:
+
+- `0` - Success
+- `1` - Generic error
+- `78` - Configuration error
+
+## Environment Variables
+
+All command-line options can be set via environment variables. See individual option descriptions for the corresponding environment variable names.
+
+Example:
+
+```bash
+export VECTOR_CONFIG=/etc/vector/vector.yaml
+export VECTOR_THREADS=4
+export VECTOR_LOG_FORMAT=json
+vector
+```
+
+## Signal Handling
+
+Vector responds to the following signals:
+
+- **SIGINT / SIGTERM** - Initiates graceful shutdown
+- **SIGHUP** - Reloads configuration (if `--watch-config` is not used)
+- **SIGKILL** - Forces immediate termination (not recommended)
+
+Example:
+
+```bash
+# Reload configuration
+sudo kill -HUP $(pidof vector)
+
+# Graceful shutdown
+sudo kill -TERM $(pidof vector)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Commands Reference" icon="book" href="/reference/cli/commands">
+    Detailed reference for all CLI commands
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Learn how to configure Vector
+  </Card>
+</CardGroup>

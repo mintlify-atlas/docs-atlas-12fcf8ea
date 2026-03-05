@@ -1,0 +1,613 @@
+---
+title: Kafka Sink
+description: Publish observability events to Apache Kafka topics with high throughput
+icon: stream
+---
+
+The Kafka sink publishes observability events to Apache Kafka topics. It provides high-throughput data ingestion with support for partitioning, SASL authentication, compression, and exactly-once semantics.
+
+## Configuration
+
+```toml
+[sinks.kafka]
+type = "kafka"
+inputs = ["my_source"]
+
+# Kafka brokers
+bootstrap_servers = "10.14.22.123:9092,10.14.23.332:9092"
+
+# Topic configuration
+topic = "logs-{{ environment }}"
+
+# Encoding
+encoding.codec = "json"
+
+# Compression
+compression = "snappy"
+
+# Batching
+batch.timeout_secs = 1
+batch.max_events = 1000
+```
+
+## Core Parameters
+
+<ParamField path="bootstrap_servers" type="string" required>
+  Comma-separated list of Kafka bootstrap servers in `host:port` format.
+  
+  These servers are used to discover the full cluster topology.
+
+  ```toml
+  bootstrap_servers = "10.14.22.123:9092,10.14.23.332:9092"
+  bootstrap_servers = "kafka-1:9092,kafka-2:9092,kafka-3:9092"
+  ```
+</ParamField>
+
+<ParamField path="topic" type="string" required>
+  Kafka topic name to write events to. Supports template syntax for dynamic topic selection.
+
+  <Expandable title="Examples">
+    ```toml
+    # Static topic
+    topic = "logs"
+    
+    # Date-based topic
+    topic = "logs-%Y-%m-%d"
+    
+    # Environment-based routing
+    topic = "logs-{{ environment }}"
+    
+    # Service-based routing
+    topic = "{{ service }}-logs"
+    
+    # Multi-level routing
+    topic = "logs-{{ environment }}-{{ service }}"
+    ```
+  </Expandable>
+</ParamField>
+
+<ParamField path="healthcheck_topic" type="string">
+  Topic name to use for healthcheck. If omitted, the `topic` field is used.
+  
+  Useful when `topic` is templated to prevent healthcheck warnings.
+
+  ```toml
+  topic = "logs-{{ environment }}"
+  healthcheck_topic = "logs-production"  # Use a known topic for healthcheck
+  ```
+</ParamField>
+
+<ParamField path="key_field" type="string">
+  Event field to use as the Kafka message key. The key determines partition assignment.
+  
+  If unspecified or the field doesn't exist, Kafka uses round-robin partitioning.
+
+  ```toml
+  key_field = "user_id"      # Use user_id as partition key
+  key_field = "customer_id"  # Group by customer
+  key_field = ".partition_key" # Use nested field
+  ```
+</ParamField>
+
+## Encoding
+
+<ParamField path="encoding.codec" type="string" required>
+  Encoding format for events. Options:
+  - `json`: JSON encoding
+  - `text`: Plain text
+  - `avro`: Apache Avro
+  - `logfmt`: Logfmt encoding
+  - `native`: Vector's native encoding
+
+  ```toml
+  [sinks.kafka.encoding]
+  codec = "json"
+  ```
+</ParamField>
+
+<ParamField path="encoding.only_fields" type="array">
+  Include only specified fields in output.
+
+  ```toml
+  [sinks.kafka.encoding]
+  codec = "json"
+  only_fields = ["timestamp", "message", "level"]
+  ```
+</ParamField>
+
+<ParamField path="encoding.except_fields" type="array">
+  Exclude specified fields from output.
+
+  ```toml
+  [sinks.kafka.encoding]
+  codec = "json"
+  except_fields = ["_metadata", "secret_token"]
+  ```
+</ParamField>
+
+<ParamField path="encoding.timestamp_format" type="string" default="rfc3339">
+  Format for timestamp fields. Options: `rfc3339`, `unix`, `unix_ms`, `unix_ns`.
+
+  ```toml
+  [sinks.kafka.encoding]
+  codec = "json"
+  timestamp_format = "unix_ms"
+  ```
+</ParamField>
+
+## Authentication
+
+The Kafka sink supports SASL and TLS authentication.
+
+### SASL Authentication
+
+<ParamField path="sasl.enabled" type="boolean" default="false">
+  Enable SASL authentication.
+</ParamField>
+
+<ParamField path="sasl.username" type="string">
+  SASL username.
+</ParamField>
+
+<ParamField path="sasl.password" type="string">
+  SASL password.
+</ParamField>
+
+<ParamField path="sasl.mechanism" type="string">
+  SASL mechanism. Common options:
+  - `PLAIN`: Plain text authentication
+  - `SCRAM-SHA-256`: SCRAM with SHA-256
+  - `SCRAM-SHA-512`: SCRAM with SHA-512
+
+  For other mechanisms (like Kerberos), use `librdkafka_options`.
+</ParamField>
+
+```toml
+[sinks.kafka.sasl]
+enabled = true
+username = "${KAFKA_USERNAME}"
+password = "${KAFKA_PASSWORD}"
+mechanism = "SCRAM-SHA-256"
+```
+
+### TLS Configuration
+
+<ParamField path="tls.enabled" type="boolean" default="false">
+  Enable TLS/SSL encryption.
+</ParamField>
+
+<ParamField path="tls.ca_file" type="string">
+  Path to CA certificate file for verifying broker certificates.
+
+  ```toml
+  [sinks.kafka.tls]
+  enabled = true
+  ca_file = "/path/to/ca.pem"
+  ```
+</ParamField>
+
+<ParamField path="tls.crt_file" type="string">
+  Path to client certificate file for mutual TLS.
+</ParamField>
+
+<ParamField path="tls.key_file" type="string">
+  Path to client private key file for mutual TLS.
+</ParamField>
+
+<ParamField path="tls.verify_certificate" type="boolean" default="true">
+  Verify broker TLS certificates.
+</ParamField>
+
+<ParamField path="tls.verify_hostname" type="boolean" default="true">
+  Verify broker hostname matches certificate.
+</ParamField>
+
+```toml
+[sinks.kafka.tls]
+enabled = true
+ca_file = "/etc/ssl/certs/kafka-ca.pem"
+crt_file = "/etc/ssl/certs/client.pem"
+key_file = "/etc/ssl/private/client-key.pem"
+```
+
+### Combined SASL and TLS
+
+```toml
+# SASL over TLS (sasl_ssl)
+[sinks.kafka.sasl]
+enabled = true
+username = "vector"
+password = "${KAFKA_PASSWORD}"
+mechanism = "SCRAM-SHA-512"
+
+[sinks.kafka.tls]
+enabled = true
+ca_file = "/path/to/ca.pem"
+```
+
+## Compression
+
+<ParamField path="compression" type="string" default="none">
+  Compression algorithm for messages. Options:
+  - `none`: No compression
+  - `gzip`: Gzip compression (good compatibility)
+  - `snappy`: Snappy compression (fast, recommended)
+  - `lz4`: LZ4 compression (fastest)
+  - `zstd`: Zstandard compression (best ratio)
+
+  ```toml
+  compression = "snappy"  # Recommended for most use cases
+  compression = "zstd"    # Best compression ratio
+  compression = "lz4"     # Fastest
+  ```
+</ParamField>
+
+## Batching
+
+Batching controls are mapped to librdkafka options:
+
+<ParamField path="batch.timeout_secs" type="float">
+  Maximum time to wait before sending a batch. Maps to `queue.buffering.max.ms`.
+
+  ```toml
+  [sinks.kafka.batch]
+  timeout_secs = 1.0  # Send every second
+  ```
+</ParamField>
+
+<ParamField path="batch.max_events" type="integer">
+  Maximum number of messages per batch. Maps to `batch.num.messages`.
+
+  ```toml
+  [sinks.kafka.batch]
+  max_events = 1000
+  ```
+</ParamField>
+
+<ParamField path="batch.max_bytes" type="integer">
+  Maximum batch size in bytes. Maps to `batch.size`.
+
+  ```toml
+  [sinks.kafka.batch]
+  max_bytes = 1048576  # 1MB
+  ```
+</ParamField>
+
+```toml
+# Optimized for throughput
+[sinks.kafka.batch]
+timeout_secs = 5.0
+max_events = 10000
+max_bytes = 10485760  # 10MB
+
+# Optimized for latency
+[sinks.kafka.batch]
+timeout_secs = 0.1
+max_events = 100
+max_bytes = 102400  # 100KB
+```
+
+## Timeouts
+
+<ParamField path="socket_timeout_ms" type="integer" default="60000">
+  Socket timeout in milliseconds for network requests.
+
+  ```toml
+  socket_timeout_ms = 30000  # 30 seconds
+  ```
+</ParamField>
+
+<ParamField path="message_timeout_ms" type="integer" default="300000">
+  Local message timeout in milliseconds. Maximum time a message can wait in the producer queue.
+
+  ```toml
+  message_timeout_ms = 60000  # 1 minute
+  ```
+</ParamField>
+
+## Rate Limiting
+
+<ParamField path="rate_limit_duration_secs" type="integer" default="1">
+  Time window for rate limiting in seconds.
+</ParamField>
+
+<ParamField path="rate_limit_num" type="integer" default="i64::MAX">
+  Maximum number of requests allowed within the rate limit window.
+
+  ```toml
+  rate_limit_duration_secs = 1
+  rate_limit_num = 100  # Max 100 requests per second
+  ```
+</ParamField>
+
+## Headers
+
+<ParamField path="headers_key" type="string">
+  Event field containing a map of Kafka headers to include with each message.
+
+  ```toml
+  headers_key = "headers"
+  ```
+</ParamField>
+
+Then in your events:
+
+```json
+{
+  "message": "log data",
+  "headers": {
+    "trace-id": "abc123",
+    "span-id": "def456"
+  }
+}
+```
+
+## Advanced librdkafka Options
+
+<ParamField path="librdkafka_options" type="object">
+  Pass any librdkafka configuration option directly. See [librdkafka configuration](https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md).
+
+  ```toml
+  [sinks.kafka.librdkafka_options]
+  "client.id" = "vector-producer"
+  "message.send.max.retries" = "3"
+  "enable.idempotence" = "true"
+  "acks" = "all"
+  ```
+</ParamField>
+
+Common options:
+
+```toml
+[sinks.kafka.librdkafka_options]
+# Producer reliability
+"acks" = "all"  # Wait for all replicas
+"enable.idempotence" = "true"  # Exactly-once semantics
+"max.in.flight.requests.per.connection" = "5"
+
+# Performance tuning
+"linger.ms" = "100"  # Wait up to 100ms to batch
+"compression.type" = "snappy"
+"buffer.memory" = "67108864"  # 64MB buffer
+
+# Client identification
+"client.id" = "vector-${HOSTNAME}"
+```
+
+## Complete Examples
+
+### Basic Configuration
+
+```toml
+[sinks.kafka_basic]
+type = "kafka"
+inputs = ["logs"]
+
+bootstrap_servers = "kafka:9092"
+topic = "application-logs"
+
+encoding.codec = "json"
+compression = "snappy"
+
+[sinks.kafka_basic.batch]
+timeout_secs = 1
+max_events = 1000
+```
+
+### With SASL Authentication
+
+```toml
+[sinks.kafka_secure]
+type = "kafka"
+inputs = ["logs"]
+
+bootstrap_servers = "kafka-1:9093,kafka-2:9093,kafka-3:9093"
+topic = "secure-logs"
+
+encoding.codec = "json"
+compression = "zstd"
+
+[sinks.kafka_secure.sasl]
+enabled = true
+username = "${KAFKA_USERNAME}"
+password = "${KAFKA_PASSWORD}"
+mechanism = "SCRAM-SHA-512"
+
+[sinks.kafka_secure.tls]
+enabled = true
+ca_file = "/etc/kafka/ca.pem"
+verify_certificate = true
+verify_hostname = true
+```
+
+### Dynamic Topic Routing
+
+```toml
+[sinks.kafka_routing]
+type = "kafka"
+inputs = ["classified_logs"]
+
+bootstrap_servers = "kafka:9092"
+# Route to different topics based on log level
+topic = "logs-{{ level }}"
+
+# Use host as partition key for ordering
+key_field = "host"
+
+encoding.codec = "json"
+compression = "snappy"
+```
+
+### High-Throughput Configuration
+
+```toml
+[sinks.kafka_high_volume]
+type = "kafka"
+inputs = ["metrics"]
+
+bootstrap_servers = "kafka-1:9092,kafka-2:9092,kafka-3:9092"
+topic = "metrics"
+
+encoding.codec = "json"
+compression = "lz4"  # Fastest compression
+
+# Large batches for throughput
+[sinks.kafka_high_volume.batch]
+timeout_secs = 5
+max_events = 10000
+max_bytes = 10485760  # 10MB
+
+# Performance tuning
+[sinks.kafka_high_volume.librdkafka_options]
+"linger.ms" = "1000"
+"batch.size" = "1000000"
+"buffer.memory" = "134217728"  # 128MB
+"compression.type" = "lz4"
+```
+
+### Exactly-Once Semantics
+
+```toml
+[sinks.kafka_exactly_once]
+type = "kafka"
+inputs = ["critical_events"]
+
+bootstrap_servers = "kafka:9092"
+topic = "critical-events"
+
+encoding.codec = "json"
+
+# Enable idempotence and acknowledgements
+[sinks.kafka_exactly_once.librdkafka_options]
+"enable.idempotence" = "true"
+"acks" = "all"
+"max.in.flight.requests.per.connection" = "5"
+
+# Use event ID to prevent duplicates
+key_field = "event_id"
+```
+
+### Multi-Datacenter Setup
+
+```toml
+# DC1 Kafka cluster
+[sinks.kafka_dc1]
+type = "kafka"
+inputs = ["dc1_logs"]
+bootstrap_servers = "dc1-kafka-1:9092,dc1-kafka-2:9092"
+topic = "logs"
+encoding.codec = "json"
+compression = "snappy"
+
+# DC2 Kafka cluster
+[sinks.kafka_dc2]
+type = "kafka"
+inputs = ["dc2_logs"]
+bootstrap_servers = "dc2-kafka-1:9092,dc2-kafka-2:9092"
+topic = "logs"
+encoding.codec = "json"
+compression = "snappy"
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+If you can't connect to Kafka:
+
+1. Verify `bootstrap_servers` are correct and reachable
+2. Check network connectivity and firewall rules
+3. Ensure Kafka is listening on the specified ports
+4. Verify authentication credentials if SASL is enabled
+5. Check TLS configuration matches broker settings
+
+### Authentication Failures
+
+For SASL/TLS errors:
+
+1. Verify SASL mechanism matches broker configuration
+2. Check username and password are correct
+3. Ensure CA certificate is valid and trusted
+4. Verify client certificates are not expired
+5. Check broker logs for authentication errors
+
+### Messages Not Appearing
+
+If messages aren't in Kafka:
+
+1. Verify topic exists (create if needed)
+2. Check Vector logs for errors
+3. Ensure batch timeout isn't too long
+4. Verify topic configuration allows writes
+5. Check Kafka broker logs
+
+### Performance Issues
+
+1. **Enable compression** to reduce network usage
+2. **Increase batch size** for higher throughput
+3. **Tune librdkafka options** like `linger.ms` and `batch.size`
+4. **Use faster compression** (lz4 > snappy > gzip > zstd)
+5. **Increase buffer.memory** for high-volume scenarios
+6. **Add more Kafka brokers** for horizontal scaling
+7. **Partition topics** for parallel consumption
+
+## Best Practices
+
+1. **Use compression** (snappy or lz4 recommended) to reduce network bandwidth
+2. **Set appropriate batch sizes** to balance latency and throughput
+3. **Use partition keys** (`key_field`) for message ordering guarantees
+4. **Enable SASL and TLS** in production environments
+5. **Use dynamic topics** for flexible routing based on event data
+6. **Configure `acks=all`** for critical data
+7. **Enable idempotence** for exactly-once semantics
+8. **Monitor lag** on consumer side
+9. **Set realistic timeouts** based on network conditions
+10. **Use separate topics** for different data types or priorities
+
+## Performance Tuning
+
+### For Maximum Throughput
+
+```toml
+compression = "lz4"
+
+[sinks.kafka.batch]
+timeout_secs = 5
+max_events = 10000
+max_bytes = 10485760
+
+[sinks.kafka.librdkafka_options]
+"linger.ms" = "1000"
+"batch.size" = "1000000"
+"compression.type" = "lz4"
+```
+
+### For Minimum Latency
+
+```toml
+compression = "none"
+
+[sinks.kafka.batch]
+timeout_secs = 0.1
+max_events = 100
+max_bytes = 102400
+
+[sinks.kafka.librdkafka_options]
+"linger.ms" = "0"
+```
+
+### For Reliability
+
+```toml
+[sinks.kafka.librdkafka_options]
+"enable.idempotence" = "true"
+"acks" = "all"
+"retries" = "2147483647"
+"max.in.flight.requests.per.connection" = "5"
+```
+
+## See Also
+
+- [Apache Kafka Documentation](https://kafka.apache.org/documentation/)
+- [librdkafka Configuration](https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md)
+- [Kafka Security](https://kafka.apache.org/documentation/#security)

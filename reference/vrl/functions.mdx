@@ -1,0 +1,474 @@
+---
+title: VRL Functions Reference
+description: Complete reference of all built-in VRL functions for data transformation
+---
+
+## Overview
+
+VRL provides over 200 built-in functions optimized for observability data transformation. Functions are organized by category to help you find the right tool for your use case.
+
+## Function Categories
+
+Functions are grouped into the following categories:
+
+- **Array** - Array manipulation and iteration
+- **Checksum** - Cryptographic checksums and hashing  
+- **Codec** - Encoding and decoding operations
+- **Coerce** - Type conversion and coercion
+- **Convert** - Data format conversions
+- **Cryptography** - Encryption and cryptographic operations
+- **Debug** - Debugging and inspection utilities
+- **Enrichment** - Data enrichment from external sources
+- **Enumerate** - Collection iteration and mapping
+- **Event** - Event manipulation and metadata
+- **IP** - IP address parsing and operations
+- **Map** - Object/map manipulation
+- **Metrics** - Metrics operations and aggregation
+- **Number** - Numeric operations and math
+- **Object** - Object manipulation and traversal
+- **Parse** - Parsing structured and unstructured data
+- **Path** - Event path operations
+- **Random** - Random value generation
+- **String** - String manipulation and formatting
+- **System** - System information and operations
+- **Timestamp** - Date and time operations
+- **Type** - Type checking and inspection
+
+## Function Call Syntax
+
+Functions are called using standard function call syntax:
+
+```vrl
+# Basic function call
+result = upcase("hello")
+
+# Multiple arguments
+parsed = parse_regex!("test 123", r'(\w+) (\d+)')
+
+# Named arguments
+timestamp = parse_timestamp(.time, format: "%Y-%m-%d")
+
+# Chaining function calls
+.message = upcase(trim(.raw_message))
+```
+
+## Fallibility
+
+Many VRL functions are **fallible**, meaning they can fail. Fallible functions must be handled explicitly:
+
+### Infallible Variant (! suffix)
+
+The `!` suffix makes a fallible function abort on error:
+
+```vrl
+# Aborts the program if parsing fails
+.parsed = parse_json!(.message)
+```
+
+### Fallible Variant
+
+Without `!`, you must handle the error:
+
+```vrl
+# Capture the error
+.parsed, err = parse_json(.message)
+if err != null {
+  log("Parse failed: " + err, level: "error")
+}
+```
+
+### Coalescing Operator
+
+Use `??` to provide a default value:
+
+```vrl
+# Use empty object if parsing fails
+.parsed = parse_json(.message) ?? {}
+```
+
+## Common Functions by Use Case
+
+### Parsing
+
+Parse various data formats:
+
+```vrl
+# Parse JSON
+.parsed = parse_json!(.message)
+
+# Parse syslog
+. = parse_syslog!(.message)
+
+# Parse key-value pairs
+.fields = parse_key_value!(.message)
+
+# Parse regex with named captures
+.captures = parse_regex!(.message, r'^(?P<ip>\S+) (?P<method>\w+)')
+
+# Parse CSV
+.row = parse_csv!("alice,30,engineer")
+
+# Parse common log format
+.apache = parse_apache_log!(.message, format: "common")
+
+# Parse grok patterns
+.parsed = parse_grok!(.message, "%{COMMONAPACHELOG}")
+```
+
+### String Manipulation
+
+```vrl
+# Change case
+.lower = downcase(.message)  # "HELLO" -> "hello"
+.upper = upcase(.name)       # "alice" -> "ALICE"
+.title = camelcase(.field)   # "hello_world" -> "helloWorld"
+
+# Trim whitespace
+.clean = trim(.raw_input)           # "  hello  " -> "hello"
+.left = trim_start(.text)           # "  hello" -> "hello"
+.right = trim_end(.text)            # "hello  " -> "hello"
+
+# String operations
+.length = strlen(.message)
+.contains = contains(.message, "error")
+.starts = starts_with(.path, "/api/")
+.ends = ends_with(.file, ".log")
+
+# Replace and substitute
+.clean = replace(.message, "password", "[REDACTED]")
+.fixed = replace!(.text, r'\d{3}-\d{2}-\d{4}', "XXX-XX-XXXX")
+
+# Split and join
+.parts = split(.message, ",")
+.combined = join!(array!(.tags), ", ")
+
+# Extract substrings
+.slice = slice!("hello world", start: 0, end: 5)  # "hello"
+.substr = truncate("long text", limit: 10)
+```
+
+### Type Coercion
+
+Convert between types safely:
+
+```vrl
+# To string
+.text = to_string(.number)      # 42 -> "42"
+.bool_str = to_string(true)     # true -> "true"
+
+# To numbers
+.number = to_int!("42")         # "42" -> 42
+.decimal = to_float!("3.14")    # "3.14" -> 3.14
+
+# To boolean
+.flag = to_bool!("true")        # "true" -> true
+
+# To array
+.arr = to_array(.value)         # wraps value in array
+
+# To timestamp
+.time = to_timestamp!(.epoch_ms)
+```
+
+### Array Operations
+
+```vrl
+# Create and manipulate arrays
+.items = [1, 2, 3]
+.first = .items[0]
+.last = get!(array!(.items), [-1])
+
+# Array functions
+.count = length(array!(.tags))
+.includes = includes(["a", "b", "c"], "b")  # true
+.unique = unique([1, 2, 2, 3])              # [1, 2, 3]
+.sorted = sort([3, 1, 2])                   # [1, 2, 3]
+
+# Add/remove elements
+.with_new = push([1, 2], 3)                 # [1, 2, 3]
+.removed, .rest = pop([1, 2, 3])            # removed=3, rest=[1,2]
+.combined = append([1, 2], [3, 4])          # [1, 2, 3, 4]
+.subset = slice!([1,2,3,4], start: 1, end: 3) # [2, 3]
+
+# Array filtering and transformation
+.even = filter(array!(.numbers)) -> |_i, v| { mod(int!(v), 2) == 0 }
+.doubled = map_values(array!(.numbers)) -> |v| { int!(v) * 2 }
+.flattened = flatten([[1, 2], [3, 4]])      # [1, 2, 3, 4]
+```
+
+### Object Operations
+
+```vrl
+# Create and access objects
+.obj = {"name": "Alice", "age": 30}
+.name = get!(.obj, ["name"])
+
+# Check for fields
+.has_user = exists(.user)
+.has_nested = exists(.metadata.timestamp)
+
+# Object manipulation
+.merged = merge({"a": 1}, {"b": 2})              # {"a": 1, "b": 2}
+.deep = merge({"a": {"b": 1}}, {"a": {"c": 2}}, deep: true)
+
+# Remove fields
+.old_value = del(.deprecated_field)
+.removed = remove!(.obj, ["age"])
+
+# Get keys and values
+.all_keys = keys(object!(.metadata))
+.all_values = values(object!(.metadata))
+
+# Flatten nested objects
+.flat = flatten({"a": {"b": {"c": 1}}})  # {"a.b.c": 1}
+
+# Transform objects
+.upper_keys = map_keys(object!(.tags)) -> |k| { upcase(k) }
+.inc_values = map_values(object!(.counts)) -> |v| { int!(v) + 1 }
+```
+
+### Timestamp Operations
+
+```vrl
+# Current time
+.now = now()
+
+# Parse timestamps
+.ts = parse_timestamp!("2021-03-01 15:00:00", format: "%Y-%m-%d %H:%M:%S")
+.iso = parse_timestamp!("2021-03-01T15:00:00Z", format: "%+")
+
+# Format timestamps
+.formatted = format_timestamp!(.timestamp, format: "%Y-%m-%d")
+.readable = format_timestamp!(.timestamp, format: "%Y-%m-%d %H:%M:%S", timezone: "America/New_York")
+
+# Unix timestamp conversion
+.unix_seconds = to_unix_timestamp(.timestamp)
+.from_unix = from_unix_timestamp!(1614614400)
+
+# Timestamp arithmetic
+.duration = .end_time - .start_time  # Returns duration in nanoseconds
+```
+
+### Encoding/Decoding
+
+```vrl
+# Base64
+.encoded = encode_base64(.binary_data)
+.decoded = decode_base64!("SGVsbG8=")
+
+# URL encoding
+.url_safe = encode_uri_component(.user_input)
+.decoded_url = decode_uri_component!("%20hello%20")
+
+# Hex
+.hex = encode_base16(.data)
+.bytes = decode_base16!("48656c6c6f")
+
+# JSON
+.json_string = encode_json({"key": "value"})
+.from_json = parse_json!(.json_string)
+
+# Compression
+.compressed = encode_gzip(.large_text)
+.decompressed = decode_gzip!(.compressed)
+```
+
+### Hashing and Cryptography
+
+```vrl
+# Common hash functions
+.md5 = encode_base16(md5(.message))
+.sha1 = encode_base16(sha1(.message))
+.sha256 = encode_base16(sha2(.message, variant: "SHA-256"))
+.sha512 = encode_base16(sha2(.message, variant: "SHA-512"))
+
+# CRC checksums  
+.crc32 = to_string(crc32(.data))
+
+# HMAC
+.hmac = encode_base16(hmac(.message, key: "secret", algorithm: "SHA256"))
+
+# UUID generation
+.id = uuid_v4()
+.namespace_id = uuid_v5(namespace: "dns", name: "example.com")
+```
+
+### IP Address Operations
+
+```vrl
+# Parse IP addresses
+.ip_info = parse_ip!("192.168.1.1")
+
+# IP operations
+.is_v4 = is_ipv4!("192.168.1.1")      # true
+.is_v6 = is_ipv6!("::1")              # true
+.is_private = ip_cidr_contains!("192.168.0.0/16", .client_ip)
+
+# CIDR matching
+.in_subnet = ip_subnet!(.ip_addr, "192.168.0.0/16")
+
+# IP to integer
+.ip_as_int = ip_to_ipv6!(.ip_addr)
+```
+
+### Enrichment
+
+Enrich events with external data:
+
+```vrl
+# GeoIP enrichment
+.geo = get_enrichment_table_record!("geoip", {"ip": .client_ip})
+.country = .geo.country_name
+.city = .geo.city_name
+
+# Custom enrichment tables
+.user_info = get_enrichment_table_record!("users", {"user_id": .uid})
+.department = .user_info.department
+```
+
+### Metrics Operations
+
+```vrl
+# Query internal Vector metrics
+.component_metrics = get_metric_tags(name_filter: .component_id)
+```
+
+### Debugging
+
+```vrl
+# Log messages
+log("Processing event", level: "info")
+log("Invalid format: " + .message, level: "warn")
+log("Critical error", level: "error", rate_limit_secs: 10)
+
+# Assertions for testing
+assert_eq!(.expected, .actual, message: "Values must match")
+assert!(is_string(.field), message: "Field must be a string")
+```
+
+### Control Flow
+
+```vrl
+# Abort processing
+if .spam_score > 0.9 {
+  abort  # Drop the event
+}
+
+# Return early
+if .environment == "test" {
+  return .  # Return event unchanged
+}
+```
+
+## Vector-Specific Functions
+
+Vector provides additional functions beyond the standard VRL library:
+
+```vrl
+# Get secrets from Vector's secret management
+.api_key = get_secret("datadog_api_key")
+
+# Set secrets
+set_secret("api_key", .extracted_key)
+
+# Remove secrets
+remove_secret("old_key")
+
+# Set semantic meaning for fields
+set_semantic_meaning(.trace_id, "trace_id")
+set_semantic_meaning(.user.email, "user_email")
+```
+
+## Function Signatures
+
+Each function has a specific signature defining:
+
+- **Required arguments**: Must be provided
+- **Optional arguments**: Have default values
+- **Return type**: What type the function returns
+- **Fallibility**: Whether the function can fail
+
+### Example Function Signature
+
+```text
+parse_json(value: string, max_depth?: integer, lossy?: boolean) -> object|array|...
+```
+
+Meaning:
+- `value` (required): string to parse
+- `max_depth` (optional): maximum nesting depth
+- `lossy` (optional): whether to allow invalid UTF-8
+- Returns: JSON value (object, array, string, number, boolean, null)
+- Fallible: Can fail if string is invalid JSON
+
+## Best Practices
+
+### Use Infallible Variants When Appropriate
+
+```vrl
+# If failure should abort, use !
+.parsed = parse_json!(.message)
+
+# If you need to handle errors gracefully, don't use !
+.parsed, err = parse_json(.message)
+if err != null {
+  .parse_failed = true
+  .raw = .message
+}
+```
+
+### Provide Fallback Values
+
+```vrl
+# Use coalescing for simple fallbacks
+.user_id = .user.id ?? "anonymous"
+.parsed = parse_json(.message) ?? {}
+```
+
+### Check Types Before Operations
+
+```vrl
+# Check if field exists and is correct type
+if exists(.status_code) && is_integer(.status_code) {
+  .category = if .status_code >= 500 {
+    "error"
+  } else {
+    "success"
+  }
+}
+```
+
+### Chain Functions Carefully
+
+```vrl
+# Good: each step is clear
+raw = trim(.message)
+lowered = downcase(raw)
+.cleaned = replace(lowered, "  ", " ")
+
+# Also good: single chain when readable
+.cleaned = replace(downcase(trim(.message)), "  ", " ")
+```
+
+## Performance Considerations
+
+- **Avoid repeated parsing**: Parse once, store result
+- **Use exists() before accessing**: Prevents runtime checks
+- **Minimize regex complexity**: Complex patterns are slower
+- **Prefer specific functions**: `parse_json` is faster than `parse_regex` for JSON
+- **Cache enrichment lookups**: Store results if used multiple times
+
+## Complete Function List
+
+For the complete, up-to-date list of all VRL functions with detailed documentation:
+
+- Browse functions by category in the Vector documentation
+- Use `vector vrl --help` to see function help
+- Visit [https://vrl.dev](https://vrl.dev) for searchable function reference
+- Check the [VRL stdlib source code](https://github.com/vectordotdev/vector/tree/master/lib/vrl/stdlib/src) on GitHub
+
+## Learn More
+
+- [VRL Overview](/reference/vrl/overview) - Introduction to VRL
+- [VRL Expressions](/reference/vrl/expressions) - Language syntax and operators
+- [VRL Examples](/reference/vrl/examples) - Real-world transformation examples

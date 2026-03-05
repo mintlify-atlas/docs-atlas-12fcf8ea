@@ -1,0 +1,403 @@
+---
+title: Configuration Validation
+description: Validate Vector configurations before deployment using the validate command
+---
+
+Vector provides a comprehensive validation command to check your configuration files for errors before deploying them. This helps catch issues early and ensures smooth deployments.
+
+## The Validate Command
+
+Use `vector validate` to check your configuration:
+
+```bash
+vector validate --config /etc/vector/vector.yaml
+```
+
+### What Gets Validated
+
+The validation process checks:
+
+1. **Syntax** - YAML/TOML/JSON syntax correctness
+2. **Schema** - Component configuration matches expected schema
+3. **Topology** - Data flows correctly between components
+4. **Connectivity** - Sinks can connect to external services (health checks)
+5. **Resources** - Required files and directories exist
+
+## Basic Usage
+
+### Validate a Single File
+
+```bash
+vector validate --config vector.yaml
+```
+
+### Validate Multiple Files
+
+```bash
+vector validate --config vector.yaml,additional.yaml
+```
+
+### Validate a Directory
+
+Validate all configuration files in a directory:
+
+```bash
+vector validate --config-dir /etc/vector/configs/
+```
+
+### Validate Multiple Directories
+
+```bash
+vector validate --config-dir /etc/vector/configs/,/opt/vector/
+```
+
+## Command-Line Options
+
+### Configuration File Options
+
+Specify configuration files in different formats:
+
+```bash
+# Auto-detect format from file extension
+vector validate --config vector.yaml
+
+# Explicitly specify TOML format
+vector validate --config-toml vector.toml
+
+# Explicitly specify JSON format
+vector validate --config-json vector.json
+
+# Explicitly specify YAML format
+vector validate --config-yaml vector.yaml
+```
+
+### Skip Environment Checks
+
+Skip component and health checks (only validate syntax and schema):
+
+```bash
+vector validate --no-environment --config vector.yaml
+```
+
+This is useful for:
+- CI/CD pipelines where external services aren't available
+- Quick syntax checking
+- Validating configurations for different environments
+
+### Skip Health Checks Only
+
+Validate components but skip sink health checks:
+
+```bash
+vector validate --skip-healthchecks --config vector.yaml
+```
+
+Use this when:
+- External services are temporarily unavailable
+- You want to validate topology without network access
+- Health checks are slow or flaky in your environment
+
+### Deny Warnings
+
+Treat warnings as errors (fail validation on warnings):
+
+```bash
+vector validate --deny-warnings --config vector.yaml
+```
+
+Recommended for:
+- Production deployments
+- CI/CD pipelines
+- Enforcing best practices
+
+### Disable Environment Variable Interpolation
+
+Skip environment variable substitution during validation:
+
+```bash
+vector validate --disable-env-var-interpolation --config vector.yaml
+```
+
+Useful when validating configurations where environment variables aren't set.
+
+## Environment Variables
+
+You can also specify configuration via environment variables:
+
+```bash
+# Set config file
+export VECTOR_CONFIG=/etc/vector/vector.yaml
+vector validate
+
+# Set config directory
+export VECTOR_CONFIG_DIR=/etc/vector/configs/
+vector validate
+
+# Disable environment variable interpolation
+export VECTOR_DISABLE_ENV_VAR_INTERPOLATION=true
+vector validate
+```
+
+## Understanding Validation Output
+
+### Successful Validation
+
+When validation succeeds, you'll see:
+
+```bash
+$ vector validate --config vector.yaml
+√ Loaded ["vector.yaml"]
+√ Component configuration
+√ Health check "elasticsearch"
+√ Health check "s3"
+------------------------
+              Validated
+```
+
+### Validation Errors
+
+When validation fails, errors are clearly displayed:
+
+```bash
+$ vector validate --config vector.yaml
+x Failed to load ["vector.yaml"]
+x unknown field `typ`, expected `type` at line 5 column 5
+```
+
+### Validation Warnings
+
+Warnings indicate potential issues:
+
+```bash
+$ vector validate --config vector.yaml
+Loaded with warnings ["vector.yaml"]
+-------------------------------------
+~ Sink 'elasticsearch' has no inputs
+~ Health check disabled for "s3"
+
+√ Component configuration
+------------------------
+              Validated
+```
+
+## Common Validation Errors
+
+### Syntax Errors
+
+**Error**: `unknown field 'typ'`
+
+**Solution**: Check for typos in field names:
+
+```yaml
+# ❌ Wrong
+sources:
+  logs:
+    typ: file  # Typo: 'typ' instead of 'type'
+
+# ✅ Correct
+sources:
+  logs:
+    type: file
+```
+
+### Missing Required Fields
+
+**Error**: `missing field 'type'`
+
+**Solution**: Add the required field:
+
+```yaml
+# ❌ Wrong
+sources:
+  logs:
+    include: ["/var/log/*.log"]
+
+# ✅ Correct
+sources:
+  logs:
+    type: file
+    include: ["/var/log/*.log"]
+```
+
+### Invalid Topology
+
+**Error**: `Input 'unknown_source' not found`
+
+**Solution**: Ensure all referenced components exist:
+
+```yaml
+# ❌ Wrong
+transforms:
+  parse:
+    type: remap
+    inputs: [unknown_source]  # This source doesn't exist
+
+# ✅ Correct
+sources:
+  logs:
+    type: file
+    include: ["/var/log/*.log"]
+
+transforms:
+  parse:
+    type: remap
+    inputs: [logs]  # References existing source
+```
+
+### Health Check Failures
+
+**Error**: `Health check for "elasticsearch" failed: connection refused`
+
+**Solutions**:
+
+1. Fix the connection issue
+2. Skip health checks temporarily:
+   ```bash
+   vector validate --skip-healthchecks --config vector.yaml
+   ```
+3. Disable health check for specific sink:
+   ```yaml
+   sinks:
+     elasticsearch:
+       type: elasticsearch
+       healthcheck:
+         enabled: false
+   ```
+
+## CI/CD Integration
+
+Integrate validation into your CI/CD pipeline:
+
+### GitHub Actions
+
+```yaml
+name: Validate Vector Config
+
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Vector
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL https://sh.vector.dev | bash
+      
+      - name: Validate Configuration
+        run: |
+          vector validate \
+            --deny-warnings \
+            --no-environment \
+            --config vector.yaml
+```
+
+### GitLab CI
+
+```yaml
+validate-config:
+  image: timberio/vector:latest-alpine
+  script:
+    - vector validate --deny-warnings --no-environment --config vector.yaml
+  only:
+    - merge_requests
+    - main
+```
+
+### Jenkins
+
+```groovy
+stage('Validate Vector Config') {
+  steps {
+    sh '''
+      vector validate \
+        --deny-warnings \
+        --no-environment \
+        --config vector.yaml
+    '''
+  }
+}
+```
+
+## Pre-Deployment Checklist
+
+Before deploying a Vector configuration:
+
+- [ ] Run `vector validate --config <file>` successfully
+- [ ] Run with `--deny-warnings` to catch potential issues
+- [ ] Test health checks if external services are available
+- [ ] Validate in an environment similar to production
+- [ ] Check that all environment variables are properly set
+- [ ] Verify file paths and permissions
+- [ ] Review any warnings carefully
+
+## Validation Best Practices
+
+### 1. Always Validate Before Deploying
+
+Make validation a required step in your deployment process:
+
+```bash
+#!/bin/bash
+set -e
+
+echo "Validating Vector configuration..."
+vector validate --deny-warnings --config /etc/vector/vector.yaml
+
+echo "Reloading Vector..."
+systemctl reload vector
+```
+
+### 2. Use --no-environment in CI/CD
+
+In CI/CD pipelines, use `--no-environment` to validate without requiring external services:
+
+```bash
+vector validate --no-environment --deny-warnings --config vector.yaml
+```
+
+### 3. Test Health Checks in Staging
+
+Run full validation with health checks in staging:
+
+```bash
+vector validate --deny-warnings --config vector.yaml
+```
+
+### 4. Version Control Your Configurations
+
+Always keep configurations in version control and validate on every commit.
+
+### 5. Document Environment Variables
+
+Maintain a list of required environment variables:
+
+```yaml
+# Required environment variables:
+# - AWS_ACCESS_KEY_ID
+# - AWS_SECRET_ACCESS_KEY
+# - ELASTICSEARCH_URL
+# - API_KEY
+
+sinks:
+  s3:
+    type: aws_s3
+    bucket: "${AWS_BUCKET}"
+```
+
+## Testing Configurations
+
+Beyond validation, you can test configurations with the `vector test` command:
+
+```bash
+vector test --config vector.yaml tests/
+```
+
+See the [Unit Testing Guide](https://vector.dev/guides/level-up/unit-testing/) for more information.
+
+## Next Steps
+
+- Learn about [Monitoring](/administration/monitoring) Vector
+- Explore [Troubleshooting](/administration/troubleshooting) techniques
+- Review [Upgrading](/administration/upgrading) procedures

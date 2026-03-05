@@ -1,0 +1,175 @@
+---
+title: Configuration Overview
+description: Learn how to configure Vector using YAML, TOML, or JSON formats
+---
+
+Vector is configured using a single configuration file that defines sources, transforms, sinks, and global options. This flexible configuration system allows you to build powerful observability data pipelines.
+
+## Configuration Formats
+
+Vector supports multiple configuration formats:
+
+- **YAML** (recommended) - Human-readable and widely used
+- **TOML** - Simple and expressive
+- **JSON** - Machine-friendly format
+
+### Basic Configuration Example
+
+Here's a simple configuration that reads from stdin and outputs to console:
+
+```yaml
+sources:
+  in:
+    type: stdin
+
+sinks:
+  out:
+    inputs: [in]
+    type: console
+    encoding:
+      codec: text
+```
+
+## Configuration Structure
+
+A Vector configuration consists of four main sections:
+
+### 1. Global Options
+
+Global settings that apply to the entire Vector instance:
+
+```yaml
+data_dir: "/var/lib/vector"
+
+log_schema:
+  host_key: "host"
+  message_key: "message"
+  timestamp_key: "timestamp"
+```
+
+### 2. Sources
+
+Data ingestion components that collect events from various sources:
+
+```yaml
+sources:
+  apache_logs:
+    type: file
+    include: ["/var/log/apache2/*.log"]
+    ignore_older: 86400
+```
+
+### 3. Transforms
+
+Data processing components that modify, filter, or enrich events:
+
+```yaml
+transforms:
+  parse_logs:
+    type: remap
+    inputs: [apache_logs]
+    source: |
+      . = parse_apache_log!(.message)
+```
+
+### 4. Sinks
+
+Data output components that send events to destinations:
+
+```yaml
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs: [parse_logs]
+    endpoint: "http://localhost:9200"
+    bulk:
+      index: "vector-%Y-%m-%d"
+```
+
+## Complete Example
+
+Here's a complete configuration that demonstrates all components:
+
+```yaml
+# Global options
+data_dir: "/var/lib/vector"
+
+log_schema:
+  host_key: "host"
+  message_key: "message"
+  timestamp_key: "timestamp"
+
+# Data ingestion
+sources:
+  apache_logs:
+    type: file
+    include: ["/var/log/apache2/*.log"]
+    ignore_older: 86400
+
+# Data processing
+transforms:
+  parse_logs:
+    type: remap
+    inputs: [apache_logs]
+    source: |
+      . = parse_apache_log!(.message)
+  
+  sample_logs:
+    type: sample
+    inputs: [parse_logs]
+    rate: 2
+
+# Data output
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs: [sample_logs]
+    endpoint: "http://localhost:9200"
+    bulk:
+      index: "vector-%Y-%m-%d"
+  
+  s3_archive:
+    type: aws_s3
+    inputs: [parse_logs]
+    region: us-east-1
+    bucket: log-archives
+    compression: gzip
+    encoding:
+      codec: json
+```
+
+## Configuration Loading
+
+Vector loads configuration files in order and merges them together. You can specify multiple configuration files:
+
+```bash
+vector --config /etc/vector/vector.yaml --config /etc/vector/sources.yaml
+```
+
+## Environment Variables
+
+Vector supports environment variable interpolation in configuration files:
+
+```yaml
+sources:
+  demo_logs:
+    type: demo_logs
+    format: "${LOG_FORMAT:-syslog}"
+    interval: ${LOG_INTERVAL:-1}
+```
+
+## Configuration Validation
+
+Validate your configuration before starting Vector:
+
+```bash
+vector validate --config /etc/vector/vector.yaml
+```
+
+## Next Steps
+
+- [Sources](/configuration/sources) - Learn about data ingestion
+- [Transforms](/configuration/transforms) - Learn about data processing
+- [Sinks](/configuration/sinks) - Learn about data output
+- [Global Options](/configuration/global-options) - Configure global settings
+- [Testing](/configuration/testing) - Test your configuration

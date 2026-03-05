@@ -1,0 +1,607 @@
+---
+title: Data Enrichment
+description: Enhance your observability data with contextual information using enrichment tables
+---
+
+Data enrichment adds contextual information to your events, making them more valuable for analysis and troubleshooting. Vector provides powerful enrichment capabilities through enrichment tables and VRL functions.
+
+## What is Data Enrichment?
+
+Enrichment enhances raw event data by adding contextual information from external sources. Common enrichment use cases include:
+
+- **GeoIP lookups**: Add geographic information based on IP addresses
+- **Service mapping**: Add service metadata based on identifiers
+- **User information**: Enrich events with user profiles
+- **Asset inventory**: Add device or infrastructure details
+- **Cost allocation**: Add billing or organization tags
+
+## Enrichment Tables Overview
+
+Vector supports multiple enrichment table types:
+
+- **File tables**: CSV or other structured files
+- **GeoIP tables**: MaxMind GeoIP databases
+- **MMDB tables**: Generic MaxMind database format
+
+Enrichment tables are defined globally and accessed from VRL scripts.
+
+## Setting Up Enrichment Tables
+
+### File-Based Enrichment
+
+File-based enrichment tables load data from CSV or structured files.
+
+<Steps>
+  <Step title="Create your enrichment data file">
+    Create a CSV file with your enrichment data:
+    
+    ```csv
+    # services.csv
+    service_id,service_name,team,cost_center
+    srv-001,web-frontend,platform,CC-1001
+    srv-002,api-gateway,backend,CC-1002
+    srv-003,user-service,backend,CC-1002
+    srv-004,payment-service,finance,CC-1003
+    ```
+  </Step>
+  
+  <Step title="Configure the enrichment table">
+    Add the table to your Vector configuration:
+    
+    ```toml
+    # Global enrichment table configuration
+    [enrichment_tables.services]
+      type = "file"
+      file.path = "/etc/vector/services.csv"
+      file.encoding.type = "csv"
+      
+      # Optional: Define schema
+      schema.service_id = "string"
+      schema.service_name = "string"
+      schema.team = "string"
+      schema.cost_center = "string"
+    ```
+  </Step>
+  
+  <Step title="Use the table in VRL">
+    Query the table from your remap transform:
+    
+    ```coffee
+    # Enrich event with service information
+    service_data = get_enrichment_table_record!(
+      "services",
+      { "service_id": .service_id }
+    )
+    
+    .service_name = service_data.service_name
+    .team = service_data.team
+    .cost_center = service_data.cost_center
+    ```
+  </Step>
+</Steps>
+
+### GeoIP Enrichment
+
+GeoIP enrichment adds geographic information based on IP addresses.
+
+<Steps>
+  <Step title="Download GeoIP database">
+    Obtain a MaxMind GeoIP database (GeoLite2 or commercial):
+    
+    ```bash
+    # Download GeoLite2 City database
+    wget https://git.io/GeoLite2-City.mmdb -O /etc/vector/GeoLite2-City.mmdb
+    ```
+  </Step>
+  
+  <Step title="Configure GeoIP table">
+    ```toml
+    [enrichment_tables.geoip]
+      type = "geoip"
+      path = "/etc/vector/GeoLite2-City.mmdb"
+    ```
+  </Step>
+  
+  <Step title="Enrich with geographic data">
+    ```coffee
+    # Lookup IP address
+    geo = get_enrichment_table_record!(
+      "geoip",
+      { "ip": .client_ip }
+    )
+    
+    # Add geographic fields
+    .geo.city = geo.city_name
+    .geo.country = geo.country_name
+    .geo.country_code = geo.country_code
+    .geo.continent = geo.continent_code
+    .geo.latitude = geo.latitude
+    .geo.longitude = geo.longitude
+    .geo.timezone = geo.timezone
+    .geo.postal_code = geo.postal_code
+    ```
+  </Step>
+</Steps>
+
+## Enrichment Table Functions
+
+VRL provides two functions for querying enrichment tables:
+
+### get_enrichment_table_record
+
+Returns a single record that matches the condition:
+
+```coffee
+# Get single record
+user_info = get_enrichment_table_record!(
+  "users",
+  { "user_id": .user_id }
+)
+
+.user_name = user_info.name
+.user_email = user_info.email
+```
+
+**Error handling:**
+
+```coffee
+# Handle missing records
+user_info, err = get_enrichment_table_record(
+  "users",
+  { "user_id": .user_id }
+)
+
+if err == null {
+  .user_name = user_info.name
+} else {
+  .user_name = "unknown"
+  log("User not found: " + .user_id, level: "warn")
+}
+```
+
+### find_enrichment_table_records
+
+Returns all records that match the condition:
+
+```coffee
+# Find multiple records
+matching_services = find_enrichment_table_records!(
+  "services",
+  { "team": .team_name }
+)
+
+# Extract service names
+.team_services = map_values(matching_services) -> |value| {
+  value.service_name
+}
+
+.service_count = length(matching_services)
+```
+
+## Advanced Enrichment Patterns
+
+### Multi-Field Matching
+
+Match on multiple fields for precise lookups:
+
+```coffee
+# services_by_environment.csv
+# service_id,environment,endpoint,port
+# srv-001,production,prod-api.example.com,443
+# srv-001,staging,stage-api.example.com,443
+
+# Lookup with multiple conditions
+service = get_enrichment_table_record!(
+  "services",
+  {
+    "service_id": .service_id,
+    "environment": .environment
+  }
+)
+
+.endpoint = service.endpoint
+.port = service.port
+```
+
+### Date Range Enrichment
+
+Enrich based on time ranges:
+
+```coffee
+# pricing_history.csv
+# product_id,start_date,end_date,price
+# prod-001,2023-01-01,2023-06-30,99.99
+# prod-001,2023-07-01,2023-12-31,89.99
+
+pricing = find_enrichment_table_records!(
+  "pricing",
+  {
+    "product_id": .product_id,
+    "from": .purchase_date,
+    "to": .purchase_date
+  }
+)
+
+if length(pricing) > 0 {
+  .price = pricing[0].price
+}
+```
+
+### Wildcard Matching
+
+Use wildcards for flexible matching:
+
+```coffee
+# network_zones.csv
+# subnet,zone_name,security_level
+# 10.0.0.0/8,internal,high
+# 192.168.0.0/16,office,medium
+
+zone = get_enrichment_table_record(
+  "network_zones",
+  { "subnet": .client_ip },
+  wildcard: "0.0.0.0"
+)
+
+if zone != null {
+  .security_zone = zone.zone_name
+  .security_level = zone.security_level
+}
+```
+
+### Nested Enrichment
+
+Perform multiple enrichment lookups:
+
+```coffee
+# First lookup: get service info
+service = get_enrichment_table_record!(
+  "services",
+  { "service_id": .service_id }
+)
+
+.service_name = service.service_name
+.team_id = service.team_id
+
+# Second lookup: get team info based on first result
+team = get_enrichment_table_record!(
+  "teams",
+  { "team_id": .team_id }
+)
+
+.team_name = team.name
+.team_email = team.email
+.cost_center = team.cost_center
+```
+
+## Practical Enrichment Recipes
+
+### Recipe 1: Complete GeoIP Enrichment
+
+<Steps>
+  <Step title="Configure GeoIP table">
+    ```toml
+    [enrichment_tables.geoip_city]
+      type = "geoip"
+      path = "/etc/vector/GeoLite2-City.mmdb"
+    
+    [enrichment_tables.geoip_asn]
+      type = "geoip"
+      path = "/etc/vector/GeoLite2-ASN.mmdb"
+    ```
+  </Step>
+  
+  <Step title="Create enrichment transform">
+    ```toml
+    [transforms.enrich_geoip]
+      type = "remap"
+      inputs = ["parse_logs"]
+      source = '''
+        # City-level enrichment
+        city_data, err = get_enrichment_table_record(
+          "geoip_city",
+          { "ip": .client_ip }
+        )
+        
+        if err == null {
+          .geo.city = city_data.city_name
+          .geo.country = city_data.country_name
+          .geo.country_code = city_data.country_code
+          .geo.region = city_data.region_name
+          .geo.latitude = city_data.latitude
+          .geo.longitude = city_data.longitude
+          .geo.timezone = city_data.timezone
+        }
+        
+        # ASN enrichment
+        asn_data, err = get_enrichment_table_record(
+          "geoip_asn",
+          { "ip": .client_ip }
+        )
+        
+        if err == null {
+          .asn.number = asn_data.autonomous_system_number
+          .asn.organization = asn_data.autonomous_system_organization
+        }
+      '''
+    ```
+  </Step>
+  
+  <Step title="Add conditional routing">
+    ```toml
+    [transforms.route_by_country]
+      type = "route"
+      inputs = ["enrich_geoip"]
+      
+      route.us_traffic.type = "vrl"
+      route.us_traffic.source = '.geo.country_code == "US"'
+      
+      route.eu_traffic.type = "vrl"
+      route.eu_traffic.source = '''
+        includes([
+          "GB", "DE", "FR", "IT", "ES", "NL", "BE", "AT", "SE", "DK"
+        ], .geo.country_code)
+      '''
+    ```
+  </Step>
+</Steps>
+
+### Recipe 2: Service Inventory Enrichment
+
+```toml
+# service_inventory.csv
+service_id,service_name,team,version,cost_center,on_call_team
+srv-web-01,web-frontend,platform-team,v2.3.1,CC-1001,platform-oncall
+srv-api-01,api-gateway,backend-team,v1.8.0,CC-1002,backend-oncall
+
+[enrichment_tables.services]
+  type = "file"
+  file.path = "/etc/vector/service_inventory.csv"
+  file.encoding.type = "csv"
+
+[transforms.enrich_services]
+  type = "remap"
+  inputs = ["parsed_logs"]
+  source = '''
+    # Lookup service details
+    service, err = get_enrichment_table_record(
+      "services",
+      { "service_id": .service_id }
+    )
+    
+    if err != null {
+      log("Service not found: " + .service_id, level: "warn")
+      .service_name = "unknown"
+      .team = "unknown"
+    } else {
+      .service_name = service.service_name
+      .team = service.team
+      .service_version = service.version
+      .cost_center = service.cost_center
+      .on_call_team = service.on_call_team
+      
+      # Add alerting info for critical services
+      if .severity == "critical" {
+        .alert_team = service.on_call_team
+        .escalation_required = true
+      }
+    }
+  '''
+```
+
+### Recipe 3: User Enrichment with Privacy
+
+```coffee
+# User enrichment with PII handling
+user, err = get_enrichment_table_record(
+  "users",
+  { "user_id": .user_id }
+)
+
+if err == null {
+  # Add non-PII user information
+  .user.account_type = user.account_type
+  .user.subscription_tier = user.tier
+  .user.region = user.region
+  .user.created_date = user.created_at
+  
+  # Hash PII for correlation without exposure
+  .user.email_hash = sha256(user.email)
+  .user.name_hash = sha256(user.full_name)
+  
+  # Don't include actual PII
+  # .user.email = user.email  # NO!
+  # .user.name = user.name    # NO!
+}
+```
+
+### Recipe 4: Cost Allocation Tags
+
+```coffee
+# Enrich with cost allocation information
+resource, err = get_enrichment_table_record(
+  "resources",
+  { "resource_id": .resource_id }
+)
+
+if err == null {
+  # Add billing tags
+  .billing.cost_center = resource.cost_center
+  .billing.project = resource.project_name
+  .billing.environment = resource.environment
+  .billing.business_unit = resource.business_unit
+  
+  # Calculate estimated cost if metrics available
+  if exists(.usage_hours) {
+    .billing.estimated_cost = to_float!(resource.hourly_rate) * .usage_hours
+  }
+}
+```
+
+## Dynamic Enrichment Table Updates
+
+Enrichment tables can be reloaded without restarting Vector:
+
+```toml
+[enrichment_tables.services]
+  type = "file"
+  file.path = "/etc/vector/services.csv"
+  file.encoding.type = "csv"
+  
+  # Auto-reload when file changes
+  file.auto_reload = true
+  file.reload_interval_secs = 60
+```
+
+**Manual reload via API:**
+
+```bash
+# Reload specific table
+curl -X POST http://localhost:8686/enrichment_tables/services/reload
+
+# Reload all tables
+curl -X POST http://localhost:8686/enrichment_tables/reload
+```
+
+## Performance Considerations
+
+### Indexing
+
+Create indexes for frequently queried fields:
+
+```toml
+[enrichment_tables.services]
+  type = "file"
+  file.path = "/etc/vector/services.csv"
+  file.encoding.type = "csv"
+  
+  # Define indexes for fast lookups
+  indexes = [
+    ["service_id"],
+    ["team", "environment"]
+  ]
+```
+
+### Caching Strategy
+
+```coffee
+# Cache enrichment results to reduce lookups
+if !exists(.enrichment_cache) {
+  .enrichment_cache = {}
+}
+
+# Check cache first
+if exists(.enrichment_cache[.service_id]) {
+  service_data = .enrichment_cache[.service_id]
+} else {
+  # Perform lookup and cache result
+  service_data = get_enrichment_table_record!(
+    "services",
+    { "service_id": .service_id }
+  )
+  .enrichment_cache[.service_id] = service_data
+}
+```
+
+### Handling Large Tables
+
+<Steps>
+  <Step title="Use appropriate indexes">
+    Index fields that you query frequently to speed up lookups.
+  </Step>
+  
+  <Step title="Filter data">
+    Only load necessary rows in your enrichment table. Remove historical or irrelevant data.
+  </Step>
+  
+  <Step title="Consider memory limits">
+    Large enrichment tables consume memory. Monitor Vector's memory usage and adjust table size accordingly.
+  </Step>
+  
+  <Step title="Use disk buffers">
+    If enrichment increases processing time, use disk buffers to prevent backpressure:
+    
+    ```toml
+    [sinks.my_sink.buffer]
+      type = "disk"
+      max_size = 1073741824  # 1 GB
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting Enrichment
+
+### Debugging Missing Enrichment
+
+```coffee
+# Add debug logging
+service, err = get_enrichment_table_record(
+  "services",
+  { "service_id": .service_id }
+)
+
+if err != null {
+  log("Enrichment failed for service_id: " + .service_id, level: "debug")
+  log("Error: " + string!(err), level: "debug")
+  
+  # Track enrichment failures
+  .enrichment_failed = true
+  .enrichment_error = string!(err)
+} else {
+  .enrichment_succeeded = true
+}
+```
+
+### Validating Enrichment Tables
+
+```bash
+# Test enrichment table loading
+vector validate /etc/vector/vector.toml
+
+# Check enrichment table status via API
+curl http://localhost:8686/enrichment_tables
+```
+
+### Common Issues
+
+<Steps>
+  <Step title="Table not found error">
+    **Cause**: Enrichment table name mismatch
+    
+    **Solution**: Verify table name in configuration matches VRL function call
+  </Step>
+  
+  <Step title="No matching records">
+    **Cause**: Query condition doesn't match any table rows
+    
+    **Solution**: Check field names and values, verify data exists in table
+  </Step>
+  
+  <Step title="Multiple records found">
+    **Cause**: Using `get_enrichment_table_record` when multiple matches exist
+    
+    **Solution**: Use `find_enrichment_table_records` or add more specific conditions
+  </Step>
+</Steps>
+
+## Best Practices
+
+1. **Keep tables updated**: Regularly refresh enrichment data to ensure accuracy
+2. **Use appropriate indexes**: Index fields that you query frequently
+3. **Handle missing data gracefully**: Always check for errors and provide defaults
+4. **Minimize table size**: Only include necessary data and fields
+5. **Version your data**: Track changes to enrichment tables
+6. **Test thoroughly**: Validate enrichment logic with test data
+7. **Monitor performance**: Track enrichment latency and failures
+8. **Document mappings**: Maintain documentation of enrichment sources and fields
+
+## Next Steps
+
+Enrichment is powerful when combined with other Vector features:
+
+- **Routing**: Use enriched data to route events to different destinations
+- **Filtering**: Filter based on enriched fields
+- **Aggregation**: Group and analyze events using enrichment tags
+- **Alerting**: Trigger alerts based on enriched context
+
+With enrichment tables, you can transform raw events into rich, contextual data that provides deep insights into your systems and applications.

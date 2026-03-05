@@ -1,0 +1,323 @@
+---
+title: HTTP Source
+description: Host an HTTP endpoint to receive logs via POST requests
+---
+
+The `http_server` source (also available as `http`) creates an HTTP server that accepts log data via POST requests. It supports authentication, TLS, compression, and multiple encoding formats.
+
+## Configuration
+
+```toml
+[sources.http_endpoint]
+type = "http_server"
+address = "0.0.0.0:8080"
+```
+
+## Parameters
+
+<ParamField path="address" type="string" required>
+  Socket address to listen on. Must include a port.
+  
+  ```toml
+  address = "0.0.0.0:80"
+  # or
+  address = "localhost:8080"
+  ```
+</ParamField>
+
+<ParamField path="path" type="string" default="/">
+  URL path on which to accept requests.
+  
+  ```toml
+  path = "/logs"
+  ```
+</ParamField>
+
+<ParamField path="strict_path" type="boolean" default="true">
+  Whether to treat the path as absolute or prefix-based.
+  
+  When `false`, requests to any path starting with `path` are accepted.
+  
+  ```toml
+  strict_path = false
+  path = "/api"
+  # Accepts /api/v1/logs, /api/v2/logs, etc.
+  ```
+</ParamField>
+
+<ParamField path="method" type="string" default="POST">
+  HTTP method to accept.
+  
+  Options: `GET`, `POST`
+  
+  ```toml
+  method = "POST"
+  ```
+</ParamField>
+
+<ParamField path="response_code" type="integer" default="200">
+  HTTP status code to return on successful requests.
+  
+  ```toml
+  response_code = 202
+  ```
+</ParamField>
+
+<ParamField path="headers" type="array" default="[]">
+  List of HTTP headers to include in log events. Supports wildcards.
+  
+  ```toml
+  headers = ["User-Agent", "X-Custom-*", "*"]
+  ```
+</ParamField>
+
+<ParamField path="query_parameters" type="array" default="[]">
+  List of URL query parameters to include in log events. Supports wildcards.
+  
+  ```toml
+  query_parameters = ["source", "environment", "*"]
+  ```
+</ParamField>
+
+<ParamField path="path_key" type="string" default="path">
+  Field name for the request URL path.
+  
+  ```toml
+  path_key = "request_path"
+  ```
+</ParamField>
+
+<ParamField path="host_key" type="string">
+  Field name for the remote IP address.
+  
+  ```toml
+  host_key = "client_ip"
+  ```
+</ParamField>
+
+<ParamField path="framing" type="object">
+  Framing configuration for splitting byte streams.
+  
+  ```toml
+  [sources.http.framing]
+  method = "newline_delimited"
+  ```
+</ParamField>
+
+<ParamField path="decoding" type="object">
+  Decoding configuration for parsing messages.
+  
+  ```toml
+  [sources.http.decoding]
+  codec = "json"
+  ```
+</ParamField>
+
+<ParamField path="auth" type="object">
+  HTTP authentication configuration.
+  
+  ```toml
+  [sources.http.auth]
+  username = "admin"
+  password = "secret"
+  ```
+</ParamField>
+
+<ParamField path="tls" type="object">
+  TLS configuration for HTTPS.
+  
+  ```toml
+  [sources.http.tls]
+  enabled = true
+  crt_file = "/path/to/cert.pem"
+  key_file = "/path/to/key.pem"
+  ```
+</ParamField>
+
+<ParamField path="acknowledgements" type="boolean" default="false">
+  Enable end-to-end acknowledgements.
+  
+  ```toml
+  acknowledgements = true
+  ```
+</ParamField>
+
+## Output Schema
+
+The HTTP source produces log events with the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | The decoded request body |
+| `path` | string | Request URL path |
+| `host` | string | Client IP address (if `host_key` is set) |
+| `timestamp` | timestamp | When the request was received |
+| `source_type` | string | Always "http_server" |
+| Custom headers | varies | Headers matching the `headers` configuration |
+| Query parameters | varies | Parameters matching the `query_parameters` configuration |
+
+## Examples
+
+### Basic HTTP Server
+
+```toml
+[sources.http_logs]
+type = "http_server"
+address = "0.0.0.0:8080"
+path = "/logs"
+```
+
+### HTTPS with Authentication
+
+```toml
+[sources.secure_http]
+type = "http_server"
+address = "0.0.0.0:8443"
+path = "/v1/logs"
+
+[sources.secure_http.auth]
+username = "vector"
+password = "${HTTP_PASSWORD}"
+
+[sources.secure_http.tls]
+enabled = true
+crt_file = "/etc/vector/tls/server.crt"
+key_file = "/etc/vector/tls/server.key"
+```
+
+### JSON Decoding with Headers
+
+```toml
+[sources.json_http]
+type = "http_server"
+address = "0.0.0.0:8080"
+headers = ["User-Agent", "X-Request-ID", "X-Forwarded-For"]
+
+[sources.json_http.decoding]
+codec = "json"
+```
+
+### Query Parameter Extraction
+
+```toml
+[sources.parameterized]
+type = "http_server"
+address = "0.0.0.0:8080"
+query_parameters = ["application", "environment", "version"]
+path_key = "endpoint"
+```
+
+### Multiple Paths with Wildcards
+
+```toml
+[sources.flexible_http]
+type = "http_server"
+address = "0.0.0.0:8080"
+path = "/api"
+strict_path = false
+headers = ["*"]
+query_parameters = ["*"]
+```
+
+### Newline-Delimited Text
+
+```toml
+[sources.text_http]
+type = "http_server"
+address = "0.0.0.0:8080"
+
+[sources.text_http.framing]
+method = "newline_delimited"
+
+[sources.text_http.decoding]
+codec = "bytes"
+```
+
+### Custom Response Code
+
+```toml
+[sources.async_http]
+type = "http_server"
+address = "0.0.0.0:8080"
+response_code = 202
+acknowledgements = true
+```
+
+## How It Works
+
+### Request Processing
+
+1. Client sends HTTP POST request to the configured path
+2. Vector authenticates the request (if auth is configured)
+3. Request body is decompressed (if Content-Encoding header is present)
+4. Body is decoded according to the framing and decoding configuration
+5. Metadata (headers, query params, path) is added to each event
+6. Events are sent through the pipeline
+7. HTTP response is returned (200 or configured `response_code`)
+
+### Compression
+
+The source automatically decompresses requests with:
+- `Content-Encoding: gzip`
+- `Content-Encoding: deflate`
+- `Content-Encoding: gzip, deflate` (multiple encodings)
+
+### Authentication
+
+Basic HTTP authentication is supported:
+```
+Authorization: Basic <base64(username:password)>
+```
+
+Unauthorized requests receive a 401 response.
+
+### Acknowledgements
+
+When acknowledgements are enabled:
+- Vector waits for events to be delivered to sinks before responding
+- Failed deliveries result in 400 response
+- Successful deliveries result in configured `response_code`
+
+## Performance
+
+- Can handle thousands of requests per second
+- Performance depends on request size and decoding complexity
+- Consider using a load balancer for high-traffic scenarios
+- Keep-alive connections improve throughput
+
+## Best Practices
+
+1. Use HTTPS in production with valid certificates
+2. Enable authentication for public-facing endpoints
+3. Configure specific paths rather than accepting all paths
+4. Use `acknowledgements = true` for critical data
+5. Monitor HTTP error rates via Vector's internal metrics
+6. Set appropriate `response_code` for async processing (e.g., 202)
+7. Use wildcard header/query extraction sparingly
+8. Configure rate limiting at the load balancer level
+9. Test failure scenarios to ensure proper error handling
+10. Use structured logging (JSON) for better downstream processing
+
+## Sending Data
+
+### Using curl
+
+```bash
+# Plain text
+curl -X POST http://localhost:8080/logs \
+  -d "This is a log line"
+
+# JSON
+curl -X POST http://localhost:8080/logs \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello", "level": "info"}'
+
+# Multiple lines
+curl -X POST http://localhost:8080/logs \
+  -d "Line 1\nLine 2\nLine 3"
+
+# With authentication
+curl -X POST http://localhost:8080/logs \
+  -u "username:password" \
+  -d "Authenticated log"
+```

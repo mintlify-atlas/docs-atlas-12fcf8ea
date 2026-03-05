@@ -1,0 +1,313 @@
+---
+title: Data Model
+description: Understanding Vector's event types and data structures
+---
+
+Vector's data model defines how observability data flows through your pipeline. Vector supports three event types: **logs**, **metrics**, and **traces**, each with its own internal structure optimized for performance and flexibility.
+
+## Event Types
+
+Vector processes three types of observability data:
+
+<CardGroup cols={3}>
+  <Card title="Log Events" icon="file-lines">
+    Structured or unstructured text data with arbitrary fields and metadata
+  </Card>
+  <Card title="Metrics" icon="chart-line">
+    Numerical measurements with timestamps, tags, and metric-specific values
+  </Card>
+  <Card title="Traces" icon="diagram-project">
+    Distributed tracing data representing spans and trace context
+  </Card>
+</CardGroup>
+
+## Log Events
+
+Log events are the most flexible event type in Vector. They consist of a collection of fields (key-value pairs) plus metadata.
+
+### Structure
+
+Every log event contains:
+
+- **Fields**: Arbitrary key-value pairs representing the log data
+- **Metadata**: Internal information about event lineage, source type, and finalization
+- **Timestamp**: Optional timestamp (defaults to ingestion time if not specified)
+
+### Field Types
+
+Log fields support rich data types through VRL (Vector Remap Language):
+
+- **String**: Text data (e.g., `"error message"`)
+- **Integer**: Whole numbers (e.g., `42`, `-100`)
+- **Float**: Decimal numbers (e.g., `3.14`, `-0.5`)
+- **Boolean**: True/false values
+- **Timestamp**: RFC3339 timestamps with timezone support
+- **Object**: Nested maps of key-value pairs
+- **Array**: Ordered lists of values
+- **Null**: Explicit null values
+
+### Example Log Event
+
+```json
+{
+  "timestamp": "2026-03-05T10:30:45.123Z",
+  "message": "User login successful",
+  "level": "info",
+  "user_id": 12345,
+  "ip_address": "192.168.1.100",
+  "duration_ms": 45.3,
+  "tags": {
+    "environment": "production",
+    "region": "us-east-1"
+  }
+}
+```
+
+### Log Namespaces
+
+Vector supports two log namespace modes:
+
+- **Legacy namespace**: Fields are stored at the root level with special handling for metadata
+- **Vector namespace**: Separates user fields from Vector metadata for cleaner data handling
+
+The namespace affects how fields like `message`, `timestamp`, and `host` are accessed and stored.
+
+## Metrics
+
+Metrics represent numerical measurements over time. Vector supports multiple metric types compatible with Prometheus, StatsD, and other protocols.
+
+### Metric Components
+
+Every metric includes:
+
+- **Name**: Identifier for the metric (e.g., `http_requests_total`)
+- **Namespace**: Optional prefix for grouping (e.g., `app`)
+- **Timestamp**: When the measurement was taken
+- **Kind**: Whether it's an absolute, incremental, or differential value
+- **Value**: The metric-specific measurement (see types below)
+- **Tags**: Key-value labels for dimensionality (e.g., `method=GET`, `status=200`)
+
+### Metric Types
+
+<Accordion title="Counter">
+  A cumulative metric that only increases (or resets to zero). Used for counting events.
+  
+  **Example**: `http_requests_total{method="GET", status="200"} = 1543`
+  
+  **Use cases**: Request counts, error counts, bytes sent/received
+</Accordion>
+
+<Accordion title="Gauge">
+  A metric that can increase or decrease. Represents a point-in-time value.
+  
+  **Example**: `memory_usage_bytes = 2147483648`
+  
+  **Use cases**: Memory usage, CPU utilization, queue depth, temperature
+</Accordion>
+
+<Accordion title="Histogram">
+  A distribution of values across predefined buckets. Useful for latency and size distributions.
+  
+  **Example**: 
+  ```
+  http_request_duration_seconds_bucket{le="0.1"} = 100
+  http_request_duration_seconds_bucket{le="0.5"} = 450
+  http_request_duration_seconds_bucket{le="1.0"} = 980
+  ```
+  
+  **Use cases**: Request latencies, response sizes, processing times
+</Accordion>
+
+<Accordion title="Summary">
+  Similar to histogram but with client-side calculated quantiles.
+  
+  **Example**:
+  ```
+  http_request_duration_seconds{quantile="0.5"} = 0.12
+  http_request_duration_seconds{quantile="0.99"} = 0.87
+  ```
+  
+  **Use cases**: Pre-calculated percentiles, sliding window statistics
+</Accordion>
+
+<Accordion title="Set">
+  Counts unique values observed.
+  
+  **Example**: `unique_visitors = ["user1", "user2", "user3"]` → count = 3
+  
+  **Use cases**: Unique users, unique error messages, cardinality tracking
+</Accordion>
+
+### Metric Kinds
+
+Vector distinguishes between metric reporting styles:
+
+- **Absolute**: The value represents the total at a point in time (e.g., gauge readings)
+- **Incremental**: The value represents a change since the last report (e.g., StatsD counters)
+- **Differential**: The difference between consecutive absolute values
+
+This distinction is crucial for proper aggregation and conversion between metric systems.
+
+### Example Metric Event
+
+```json
+{
+  "name": "http_requests_total",
+  "namespace": "api",
+  "timestamp": "2026-03-05T10:30:45.123Z",
+  "kind": "incremental",
+  "value": {
+    "type": "counter",
+    "value": 42.0
+  },
+  "tags": {
+    "method": "GET",
+    "status": "200",
+    "endpoint": "/api/users"
+  }
+}
+```
+
+## Traces
+
+Trace events represent distributed tracing data, primarily spans that describe operations in a distributed system.
+
+### Structure
+
+Trace events in Vector are implemented as specialized log events with tracing-specific fields:
+
+- **Trace ID**: Unique identifier for the entire trace
+- **Span ID**: Unique identifier for this span
+- **Parent Span ID**: Reference to the parent span (if any)
+- **Service Name**: The service that generated this span
+- **Operation Name**: Description of the operation
+- **Start Time**: When the operation began
+- **Duration**: How long the operation took
+- **Tags/Attributes**: Additional metadata about the span
+- **Events**: Point-in-time events within the span
+- **Status**: Success, error, or unknown
+
+### Example Trace Event
+
+```json
+{
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "span_id": "00f067aa0ba902b7",
+  "parent_span_id": "83887e3f99a04d28",
+  "service_name": "api-gateway",
+  "operation_name": "http.request",
+  "start_time": "2026-03-05T10:30:45.000Z",
+  "duration_ms": 125.5,
+  "status": "ok",
+  "attributes": {
+    "http.method": "GET",
+    "http.url": "/api/users/123",
+    "http.status_code": 200
+  }
+}
+```
+
+<Note>
+  Trace support in Vector is designed for routing and basic processing. For complex trace analysis and sampling, consider using specialized tracing backends.
+</Note>
+
+## Event Metadata
+
+All events carry internal metadata that Vector uses for:
+
+- **Source tracking**: Which source component generated the event
+- **Event finalization**: Acknowledgment and delivery guarantees
+- **Datadog origin metadata**: Special handling for Datadog metric origins
+- **Size caching**: Performance optimization for event size calculations
+
+Metadata is not typically exposed to users but is crucial for Vector's internal operation.
+
+## Data Type Conversions
+
+Vector automatically handles type conversions in many contexts:
+
+- Numeric strings to integers/floats when parsing
+- Timestamps from various formats (RFC3339, UNIX epoch, custom formats)
+- Arrays to single values (typically takes first element)
+- Objects to strings (via JSON serialization)
+
+<Warning>
+  Implicit type conversions may fail if data doesn't match expected formats. Use VRL's explicit conversion functions for better control and error handling.
+</Warning>
+
+## Performance Considerations
+
+### Memory Efficiency
+
+Vector's data model is optimized for:
+
+- **Zero-copy operations**: Events reference data without unnecessary duplication
+- **Lazy JSON encoding**: Size calculations are cached and computed on-demand
+- **Efficient field access**: Nested field lookups use optimized path parsing
+
+### Event Batching
+
+Vector processes events in batches internally for better throughput:
+
+- Sources produce event arrays for batch processing
+- Transforms can process multiple events simultaneously
+- Sinks batch events according to their configuration
+
+This batching is transparent to most operations but crucial for high-throughput scenarios.
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use structured logs">
+    Parse logs into structured fields early in your pipeline. This enables powerful transformations, filtering, and routing later.
+    
+    ```yaml
+    transforms:
+      parse_logs:
+        type: remap
+        source: |
+          . = parse_json!(.message)
+    ```
+  </Accordion>
+  
+  <Accordion title="Normalize field names">
+    Use consistent field naming across sources. This simplifies downstream processing and analysis.
+    
+    ```yaml
+    transforms:
+      normalize:
+        type: remap
+        source: |
+          .timestamp = del(.@timestamp)
+          .level = upcase(.severity)
+    ```
+  </Accordion>
+  
+  <Accordion title="Add context early">
+    Enrich events with environment, host, and application metadata near the source. This context is valuable throughout the pipeline.
+    
+    ```yaml
+    transforms:
+      add_context:
+        type: remap
+        source: |
+          .environment = "production"
+          .datacenter = "us-east-1"
+          .service = "api"
+    ```
+  </Accordion>
+  
+  <Accordion title="Choose the right metric type">
+    Select metric types based on your use case:
+    - Counters for cumulative values
+    - Gauges for point-in-time measurements
+    - Histograms for distributions
+  </Accordion>
+</AccordionGroup>
+
+## Related Topics
+
+- [Pipeline Model](/concepts/pipeline-model) - How data flows through Vector
+- [Sources](/concepts/sources) - Where data enters Vector
+- [Transforms](/concepts/transforms) - How to modify and enrich events
+- [VRL Reference](https://vrl.dev) - Vector Remap Language for event manipulation
